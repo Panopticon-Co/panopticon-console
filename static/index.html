@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Panopticon Console</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0f14;
+    --panel: #121821;
+    --border: #24303d;
+    --text: #d7e0e8;
+    --muted: #7c8a99;
+    --critical: #ff4d4f;
+    --high: #ff9f43;
+    --medium: #f2d94e;
+    --low: #4dd4ac;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; }
+  header span { color: var(--muted); font-size: 12px; }
+  #status { margin-left: auto; font-size: 12px; color: var(--muted); }
+  main { padding: 16px 24px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    vertical-align: top;
+  }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; }
+  tr:hover td { background: var(--panel); }
+  .sev { font-weight: 600; text-transform: uppercase; font-size: 11px; padding: 2px 6px; border-radius: 3px; }
+  .sev-critical { color: var(--critical); border: 1px solid var(--critical); }
+  .sev-high { color: var(--high); border: 1px solid var(--high); }
+  .sev-medium { color: var(--medium); border: 1px solid var(--medium); }
+  .sev-low { color: var(--low); border: 1px solid var(--low); }
+  .evidence { color: var(--muted); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-width: 420px; }
+  #empty { color: var(--muted); padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PANOPTICON CONSOLE</h1>
+  <span>V1 — live alert feed</span>
+  <span id="status">connecting…</span>
+</header>
+<main>
+  <table id="alerts-table" style="display:none">
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Rule ID</th>
+        <th>Severity</th>
+        <th>MITRE Technique</th>
+        <th>Title</th>
+        <th>Evidence</th>
+      </tr>
+    </thead>
+    <tbody id="alerts-body"></tbody>
+  </table>
+  <div id="empty">No alerts yet.</div>
+</main>
+<script>
+const POLL_INTERVAL_MS = 3000;
+const tbody = document.getElementById("alerts-body");
+const table = document.getElementById("alerts-table");
+const empty = document.getElementById("empty");
+const status = document.getElementById("status");
+
+function sevClass(sev) {
+  const s = (sev || "").toLowerCase();
+  return "sev sev-" + (["critical", "high", "medium", "low"].includes(s) ? s : "low");
+}
+
+function render(alerts) {
+  if (!alerts.length) {
+    table.style.display = "none";
+    empty.style.display = "block";
+    return;
+  }
+  table.style.display = "table";
+  empty.style.display = "none";
+  // newest first
+  const rows = [...alerts].reverse().map(a => `
+    <tr>
+      <td>${a.timestamp ?? ""}</td>
+      <td>${a.rule_id ?? ""}</td>
+      <td><span class="${sevClass(a.severity)}">${a.severity ?? ""}</span></td>
+      <td>${a.mitre_technique ?? ""}</td>
+      <td>${a.title ?? ""}</td>
+      <td class="evidence">${JSON.stringify(a.evidence ?? {}, null, 0)}</td>
+    </tr>
+  `).join("");
+  tbody.innerHTML = rows;
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/api/alerts", { cache: "no-store" });
+    const alerts = await res.json();
+    render(alerts);
+    status.textContent = `${alerts.length} alert(s) — last updated ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    status.textContent = "connection lost, retrying…";
+  }
+}
+
+poll();
+setInterval(poll, POLL_INTERVAL_MS);
+</script>
+</body>
+</html>
