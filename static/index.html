@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Panopticon Console</title>
 <style>
   :root {
@@ -29,11 +30,13 @@
     display: flex;
     align-items: baseline;
     gap: 12px;
+    flex-wrap: wrap;
   }
   header h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; }
-  header span { color: var(--muted); font-size: 12px; }
+  header .sub { color: var(--muted); font-size: 12px; }
   #status { margin-left: auto; font-size: 12px; color: var(--muted); }
   main { padding: 16px 24px; }
+  .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
   th, td {
     text-align: left;
@@ -44,84 +47,45 @@
   }
   th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; }
   tr:hover td { background: var(--panel); }
-  .sev { font-weight: 600; text-transform: uppercase; font-size: 11px; padding: 2px 6px; border-radius: 3px; }
+  td.rule { white-space: nowrap; font-weight: 600; }
+  td.when { white-space: nowrap; color: var(--muted); }
+  .sev { font-weight: 600; text-transform: uppercase; font-size: 11px; padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
   .sev-critical { color: var(--critical); border: 1px solid var(--critical); }
   .sev-high { color: var(--high); border: 1px solid var(--high); }
   .sev-medium { color: var(--medium); border: 1px solid var(--medium); }
   .sev-low { color: var(--low); border: 1px solid var(--low); }
-  .evidence { color: var(--muted); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-width: 420px; }
+  .evidence { color: var(--muted); font-size: 12px; margin: 0; }
+  .evidence div { white-space: pre-wrap; word-break: break-word; max-width: 560px; }
+  .evidence .k { color: var(--text); }
   #empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  .new-row td { animation: flash 1.4s ease-out; }
+  @keyframes flash { from { background: rgba(255, 159, 67, 0.18); } to { background: transparent; } }
 </style>
 </head>
 <body>
 <header>
   <h1>PANOPTICON CONSOLE</h1>
-  <span>V1 — live alert feed</span>
-  <span id="status">connecting…</span>
+  <span class="sub">V1 &mdash; detection-engine alert feed</span>
+  <span id="status">connecting&hellip;</span>
 </header>
 <main>
-  <table id="alerts-table" style="display:none">
-    <thead>
-      <tr>
-        <th>Timestamp</th>
-        <th>Rule ID</th>
-        <th>Severity</th>
-        <th>MITRE Technique</th>
-        <th>Title</th>
-        <th>Evidence</th>
-      </tr>
-    </thead>
-    <tbody id="alerts-body"></tbody>
-  </table>
+  <div class="table-wrap">
+    <table id="alerts-table" hidden>
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Rule</th>
+          <th>Severity</th>
+          <th>MITRE</th>
+          <th>Title</th>
+          <th>Evidence</th>
+        </tr>
+      </thead>
+      <tbody id="alerts-body"></tbody>
+    </table>
+  </div>
   <div id="empty">No alerts yet.</div>
 </main>
-<script>
-const POLL_INTERVAL_MS = 3000;
-const tbody = document.getElementById("alerts-body");
-const table = document.getElementById("alerts-table");
-const empty = document.getElementById("empty");
-const status = document.getElementById("status");
-
-function sevClass(sev) {
-  const s = (sev || "").toLowerCase();
-  return "sev sev-" + (["critical", "high", "medium", "low"].includes(s) ? s : "low");
-}
-
-function render(alerts) {
-  if (!alerts.length) {
-    table.style.display = "none";
-    empty.style.display = "block";
-    return;
-  }
-  table.style.display = "table";
-  empty.style.display = "none";
-  // newest first
-  const rows = [...alerts].reverse().map(a => `
-    <tr>
-      <td>${a.timestamp ?? ""}</td>
-      <td>${a.rule_id ?? ""}</td>
-      <td><span class="${sevClass(a.severity)}">${a.severity ?? ""}</span></td>
-      <td>${a.mitre_technique ?? ""}</td>
-      <td>${a.title ?? ""}</td>
-      <td class="evidence">${JSON.stringify(a.evidence ?? {}, null, 0)}</td>
-    </tr>
-  `).join("");
-  tbody.innerHTML = rows;
-}
-
-async function poll() {
-  try {
-    const res = await fetch("/api/alerts", { cache: "no-store" });
-    const alerts = await res.json();
-    render(alerts);
-    status.textContent = `${alerts.length} alert(s) — last updated ${new Date().toLocaleTimeString()}`;
-  } catch (e) {
-    status.textContent = "connection lost, retrying…";
-  }
-}
-
-poll();
-setInterval(poll, POLL_INTERVAL_MS);
-</script>
+<script src="/app.js"></script>
 </body>
 </html>

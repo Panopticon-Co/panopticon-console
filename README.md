@@ -1,13 +1,30 @@
 # panopticon-console
 
-Minimal V1 alert viewer for Panopticon&Co. Reads the Alert NDJSON file produced by
-[`panopticon-detection-engine`](https://github.com/Panopticon-Co/panopticon-detection-engine)'s
-`--output-file` option and displays it as a polling web page.
+Minimal V1 alert viewer for the **Panopticon&Co** EDR platform.
 
-This is deliberately the smallest thing that can show a human "an alert happened": no
-authentication, no database, no message queue, no WebSockets. The detection engine owns alert
-generation and output; this console only owns presentation, and points at the engine's output
-file via a CLI flag rather than a hardcoded path.
+The console reads the Alert NDJSON file that
+[`panopticon-detection-engine`](https://github.com/Panopticon-Co/panopticon-detection-engine)
+writes via its `--output-file` option and serves it as a single auto-polling
+web page, so a human can see that a detection fired.
+
+## Scope (deliberately small)
+
+| Owns | Does **not** own |
+|---|---|
+| Reading the engine's alert NDJSON | Detection logic |
+| Presenting alerts to a human | `Alert` creation / serialization |
+| Polling for new alerts | Telemetry collection |
+| | Remediation / response |
+
+The integration boundary is **the alert file on disk**. The console does not
+import the detection engine and makes no network call to it. No database, no
+message queue, no WebSockets, no authentication — none of that is a V1
+requirement. It is a local development / demo tool and binds `127.0.0.1` by
+default.
+
+## Requirements
+
+Python 3.9+ standard library only. No `pip install`.
 
 ## Run
 
@@ -15,9 +32,54 @@ file via a CLI flag rather than a hardcoded path.
 python app.py --alerts-file /path/to/panopticon-detection-engine/alerts.ndjson
 ```
 
-Then open `http://127.0.0.1:8787`. Options:
+Then open <http://127.0.0.1:8787>.
 
-- `--host` — bind host (default `127.0.0.1`)
-- `--port` — bind port (default `8787`)
+| Flag | Default | Meaning |
+|---|---|---|
+| `--alerts-file` | *(required)* | Path to the engine's `--output-file`. May not exist yet — the console starts anyway and picks it up once it appears. |
+| `--host` | `127.0.0.1` | Bind address. Only widen deliberately. |
+| `--port` | `8787` | Bind port. |
 
-No dependencies beyond the Python standard library.
+### HTTP surface
+
+| Route | Response |
+|---|---|
+| `GET /` | The viewer page (`static/index.html`). |
+| `GET /app.js` | The client script. |
+| `GET /api/alerts` | `application/json` array of alert objects, in file order. Missing / unreadable file → `[]`. Malformed lines are skipped. |
+
+The page polls `/api/alerts` every 3 seconds and shows timestamp, rule ID,
+severity + Wazuh level, MITRE tactic/technique, title, and the evidence
+key/value pairs. New rows flash briefly.
+
+## Security notes
+
+- Alert evidence carries attacker-influenced strings (process command lines).
+  The client writes every value to the DOM via `textContent` — never
+  `innerHTML` string-building — and the server sends
+  `Content-Security-Policy: default-src 'none'; script-src 'self'; …` plus
+  `X-Content-Type-Options: nosniff` as a second layer.
+- Only the three routes above resolve. There is no filesystem path mapping, so
+  request paths cannot be turned into arbitrary file reads.
+- Default bind is localhost. There is no auth because there is nothing
+  multi-user about a local demo; do not add one to paper over exposing it.
+
+## Test
+
+```bash
+python -m unittest discover -s tests
+```
+
+Unit tests (`tests/test_read_alerts.py`) cover NDJSON parsing: missing/empty
+file, blank lines, malformed and truncated lines, non-object JSON, ordering,
+and the display-field contract with the engine's `Alert.to_dict()`.
+HTTP tests (`tests/test_http.py`) start a real server on an ephemeral port and
+check the static routes, security headers, 404s, `HEAD`, the `/api/alerts`
+payload and field set, live reflection of file updates, injection-payload
+pass-through, and that two servers serve their own distinct `--alerts-file`.
+
+## The full V1 demonstration
+
+See [`docs/PANOPTICON_V1.md`](docs/PANOPTICON_V1.md) for the end-to-end
+walkthrough: real Windows process creation → Officer (ETW/Sysmon) →
+Schema 0.2 → detection engine → `DET-PROC-011` → `alerts.ndjson` → this console.

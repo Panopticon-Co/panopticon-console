@@ -1,3 +1,27 @@
+# Byte-compiled
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Alert NDJSON is runtime data from the detection engine, never source.
+# The console only ever reads a file passed via --alerts-file.
 *.ndjson
+
+# Test / tooling caches
+.pytest_cache/
+.coverage
+
+# Virtual environments (this project needs none — stdlib only)
+venv/
+.venv/
+env/
+
+# IDE / editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs / scratch
+*.log
