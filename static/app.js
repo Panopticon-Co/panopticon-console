@@ -46,6 +46,35 @@ function cell(text, className) {
   return td;
 }
 
+// Telemetry family for an alert. V3 alerts carry a "network"/"file"/"registry"/
+// "image_load"/"process" tag; otherwise infer from evidence key prefixes; else
+// fall back to "process" (V1/V2 alerts were all process telemetry).
+const FAMILIES = ["process", "network", "file", "registry", "image_load"];
+function familyOf(a) {
+  const tags = Array.isArray(a && a.tags) ? a.tags.map((t) => String(t).toLowerCase()) : [];
+  for (const f of FAMILIES) {
+    if (tags.includes(f)) return f;
+  }
+  const ev = a && a.evidence && typeof a.evidence === "object" ? a.evidence : {};
+  const keys = Object.keys(ev);
+  if (keys.some((k) => k.startsWith("image."))) return "image_load";
+  if (keys.some((k) => k.startsWith("registry."))) return "registry";
+  if (keys.some((k) => k.startsWith("network."))) return "network";
+  if (keys.some((k) => k.startsWith("file.") && k !== "file.path")) return "file";
+  return "process";
+}
+
+function familyCell(a) {
+  const td = document.createElement("td");
+  td.className = "family";
+  const span = document.createElement("span");
+  const fam = familyOf(a);
+  span.className = "fam fam-" + fam;
+  span.textContent = fam.replace("_", " ");
+  td.appendChild(span);
+  return td;
+}
+
 function mitreText(a) {
   const parts = [];
   if (a.mitre_technique) parts.push(String(a.mitre_technique));
@@ -92,6 +121,7 @@ function rowFor(a, isNew) {
   const tr = document.createElement("tr");
   if (isNew) tr.className = "new-row";
   tr.appendChild(cell(a.timestamp, "when"));
+  tr.appendChild(familyCell(a));
   tr.appendChild(cell(a.rule_id, "rule"));
   tr.appendChild(severityCell(a));
   tr.appendChild(cell(mitreText(a)));
