@@ -50,7 +50,22 @@ Then open <http://127.0.0.1:8787>.
 
 The page polls `/api/alerts` every 3 seconds and shows timestamp, rule ID,
 severity + Wazuh level, MITRE tactic/technique, title, and the evidence
-key/value pairs. New rows flash briefly.
+key/value pairs. Rows whose `alert_id` was not present on the previous poll
+flash briefly.
+
+### Live runs (detection-engine V2)
+
+The detection engine's V2 `--reliable` pipeline appends each alert to its
+`--output-file` the moment it is generated (`IncrementalAlertWriter`), instead
+of one dump at stream end. No console change is required for this — `read_alerts`
+already returns the file as it has grown so far and skips a half-written final
+line, so every poll picks up new alerts while the engine is still running. Point
+`--alerts-file` at the engine's `--output-file` and leave both running.
+
+`static/app.js` de-duplicates by `alert_id` before rendering, so if the engine
+ever re-appends an already-delivered alert (e.g. a restart racing its own
+delivery ack) the browser shows it once. The `/api/alerts` API itself is
+unchanged: it passes every line through untouched.
 
 ## Security notes
 
