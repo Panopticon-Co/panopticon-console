@@ -124,6 +124,41 @@ class ReadAlertsTests(unittest.TestCase):
         got = read_alerts(self.alerts_file)
         self.assertEqual([x["alert_id"] for x in got], ["ALT-1", "ALT-2"])
 
+    # -- V2 incremental / live consumption --------------------------------
+    def test_reader_sees_new_alerts_appended_during_a_live_run(self):
+        # detection-engine V2 IncrementalAlertWriter appends one line per alert
+        # as it is generated. Each poll must observe the file as grown so far,
+        # including while the engine is mid-write on the newest record.
+        with open(self.alerts_file, "a", encoding="utf-8") as fh:
+            fh.write(_line(dict(SAMPLE_ALERT, alert_id="ALT-1")))
+            fh.flush()
+        self.assertEqual([x["alert_id"] for x in read_alerts(self.alerts_file)], ["ALT-1"])
+
+        with open(self.alerts_file, "a", encoding="utf-8") as fh:
+            fh.write(_line(dict(SAMPLE_ALERT, alert_id="ALT-2")))
+            fh.write('{"alert_id": "ALT-3", "rule_i')  # torn final record
+            fh.flush()
+        self.assertEqual(
+            [x["alert_id"] for x in read_alerts(self.alerts_file)], ["ALT-1", "ALT-2"]
+        )
+
+        with open(self.alerts_file, "a", encoding="utf-8") as fh:
+            fh.write('d": "DET-PROC-011", "evidence": {}}\n')
+        self.assertEqual(
+            [x["alert_id"] for x in read_alerts(self.alerts_file)],
+            ["ALT-1", "ALT-2", "ALT-3"],
+        )
+
+    def test_reader_passes_duplicate_lines_through_unchanged(self):
+        # The API contract is "pass every line through"; de-duplication by
+        # alert_id is a client concern (static/app.js::dedupe). If the engine
+        # ever re-appends a delivered alert, the reader still returns both lines
+        # and the browser collapses them.
+        dup = _line(dict(SAMPLE_ALERT, alert_id="ALT-DUP"))
+        self.alerts_file.write_text(dup + dup, encoding="utf-8")
+        got = read_alerts(self.alerts_file)
+        self.assertEqual([x["alert_id"] for x in got], ["ALT-DUP", "ALT-DUP"])
+
 
 if __name__ == "__main__":
     unittest.main()

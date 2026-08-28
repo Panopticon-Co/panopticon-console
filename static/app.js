@@ -13,7 +13,26 @@ const table = document.getElementById("alerts-table");
 const empty = document.getElementById("empty");
 const statusEl = document.getElementById("status");
 
-let lastCount = 0;
+// alert_id values already rendered. Used to (a) drop duplicate lines the engine
+// may re-append on a restart / retry, and (b) decide which rows are genuinely
+// new and should flash. A count-based check was fragile across file rewrites.
+let seenIds = new Set();
+
+function dedupe(alerts) {
+  const out = [];
+  const ids = new Set();
+  for (const a of alerts) {
+    const id = a && a.alert_id;
+    if (id === undefined || id === null || id === "") {
+      out.push(a); // no id to dedupe on; show it
+      continue;
+    }
+    if (ids.has(String(id))) continue; // duplicate within this payload
+    ids.add(String(id));
+    out.push(a);
+  }
+  return out;
+}
 
 function sevClass(sev) {
   const s = String(sev || "").toLowerCase();
@@ -81,25 +100,29 @@ function rowFor(a, isNew) {
   return tr;
 }
 
-function render(alerts) {
-  if (!Array.isArray(alerts) || alerts.length === 0) {
+function render(rawAlerts) {
+  const alerts = Array.isArray(rawAlerts) ? dedupe(rawAlerts) : [];
+  if (alerts.length === 0) {
     table.hidden = true;
     empty.hidden = false;
-    lastCount = 0;
+    seenIds = new Set();
     return;
   }
   table.hidden = false;
   empty.hidden = true;
 
-  // Newest first. Anything past the previously seen count is "new" and flashes.
-  const newFrom = alerts.length - lastCount;
+  // A row flashes if its alert_id was not present on the previous poll.
+  const nextSeen = new Set();
   const frag = document.createDocumentFragment();
-  alerts.forEach((a, idx) => {
-    frag.appendChild(rowFor(a, idx >= newFrom));
-  });
-  const ordered = Array.from(frag.children).reverse();
+  for (const a of alerts) {
+    const id = a && a.alert_id != null ? String(a.alert_id) : null;
+    const isNew = id === null ? true : !seenIds.has(id);
+    if (id !== null) nextSeen.add(id);
+    frag.appendChild(rowFor(a, isNew));
+  }
+  const ordered = Array.from(frag.children).reverse(); // newest first
   tbody.replaceChildren(...ordered);
-  lastCount = alerts.length;
+  seenIds = nextSeen;
 }
 
 async function poll() {
@@ -108,7 +131,7 @@ async function poll() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const alerts = await res.json();
     render(alerts);
-    const n = Array.isArray(alerts) ? alerts.length : 0;
+    const n = Array.isArray(alerts) ? dedupe(alerts).length : 0;
     statusEl.textContent = `${n} alert(s) — updated ${new Date().toLocaleTimeString()}`;
   } catch (e) {
     statusEl.textContent = "connection lost, retrying…";
