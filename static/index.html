@@ -54,6 +54,13 @@
   .sev-high { color: var(--high); border: 1px solid var(--high); }
   .sev-medium { color: var(--medium); border: 1px solid var(--medium); }
   .sev-low { color: var(--low); border: 1px solid var(--low); }
+  td.family { white-space: nowrap; }
+  .fam { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); }
+  .fam-process { color: var(--low); border-color: var(--low); }
+  .fam-network { color: var(--high); border-color: var(--high); }
+  .fam-file { color: var(--medium); border-color: var(--medium); }
+  .fam-registry { color: #b18cff; border-color: #b18cff; }
+  .fam-image_load { color: var(--critical); border-color: var(--critical); }
   .evidence { color: var(--muted); font-size: 12px; margin: 0; }
   .evidence div { white-space: pre-wrap; word-break: break-word; max-width: 560px; }
   .evidence .k { color: var(--text); }
@@ -74,6 +81,7 @@
       <thead>
         <tr>
           <th>Timestamp</th>
+          <th>Type</th>
           <th>Rule</th>
           <th>Severity</th>
           <th>MITRE</th>
