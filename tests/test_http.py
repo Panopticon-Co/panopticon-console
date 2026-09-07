@@ -44,6 +44,12 @@ ALERT_XSS = dict(
 
 
 class ConsoleHTTPTests(unittest.TestCase):
+    def test_theme_engine_in_existing_script(self):
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/app.js") as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn("application/javascript", response.headers["Content-Type"])
+            self.assertIn(b"panopticon.theme.v1", response.read())
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
