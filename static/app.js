@@ -153,3 +153,54 @@ document.querySelectorAll("nav a").forEach((link) => link.addEventListener("clic
 poll(); setInterval(poll, POLL_INTERVAL_MS);
 
 });
+
+
+// RESPONSE ACTIONS PANEL
+// Read-only. Calls this console's own same-origin /api/response-actions
+// route only -- never Manager directly, so the page's CSP (connect-src
+// 'self') stays untouched and no analyst credential ever needs to reach
+// browser JavaScript. The console's own server attaches the Manager token
+// server-side (see app.py's fetch_response_actions) when --manager-url and
+// PANOPTICON_MANAGER_TOKEN are configured; if they aren't, this route
+// answers 503 and the panel simply shows "unavailable". Authorizing or
+// rejecting a response action is intentionally not offered here -- that
+// stays a direct analyst action against Manager.
+document.addEventListener("DOMContentLoaded", () => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  function text(v) { return v == null ? "—" : String(v); }
+  function node(tag, value, cls) { const el = document.createElement(tag); if (value !== undefined) el.textContent = text(value); if (cls) el.className = cls; return el; }
+  function rowFor(action) {
+    const row = node("tr");
+    row.append(node("td", action.lifecycle_state), node("td", action.action), node("td", action.tier), node("td", action.alert_id), node("td", action.created_at), node("td", action.decided_reason));
+    return row;
+  }
+  async function pollResponseActions() {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch("/api/response-actions", { cache: "no-store", signal: controller.signal });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        $("response-table").hidden = true; $("response-empty").hidden = false;
+        $("response-empty-title").textContent = response.status === 503 ? "Response actions unavailable" : "Cannot load response actions";
+        $("response-empty-description").textContent = text(payload.error || payload.detail || "Manager did not return response actions.");
+        $("response-status").textContent = "Not connected";
+        return;
+      }
+      const actions = Array.isArray(payload.response_actions) ? payload.response_actions : [];
+      const fragment = document.createDocumentFragment();
+      for (const action of actions) fragment.append(rowFor(action));
+      $("response-body").replaceChildren(fragment);
+      $("response-table").hidden = !actions.length;
+      $("response-empty").hidden = !!actions.length;
+      $("response-empty-title").textContent = "No response actions yet";
+      $("response-empty-description").textContent = "Response actions appear here when a detection recommends one.";
+      $("response-status").textContent = "Connected · updated " + new Date().toLocaleTimeString();
+    } catch {
+      $("response-status").textContent = "Cannot reach the console server";
+    } finally { clearTimeout(timeout); }
+  }
+  $("response-refresh").addEventListener("click", pollResponseActions);
+  pollResponseActions();
+  setInterval(pollResponseActions, 3000);
+});

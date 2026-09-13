@@ -30,3 +30,4 @@ jobs:
           node --check static/app.js
           node tests/test_dashboard.cjs
           node tests/test_theme.cjs
+          node tests/test_response_panel.cjs
