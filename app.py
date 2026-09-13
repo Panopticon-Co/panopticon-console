@@ -10,6 +10,20 @@ serialization. This console only reads the file the engine already wrote and
 presents it. It never imports the detection engine and never calls it over the
 network - the integration surface is the NDJSON file on disk, nothing else.
 
+Optionally, if ``--manager-url`` and a ``PANOPTICON_MANAGER_TOKEN`` analyst
+bearer token are configured, this server also proxies a single read-only
+Manager endpoint (``GET /api/response-actions`` here -> ``GET
+/api/v1/response-actions`` on Manager) so the dashboard can show the response
+approval queue. This is a same-origin, read-only, credential-free proxy from
+the browser's perspective: the analyst token lives only in this server
+process's environment, is attached to the outbound request here, and is never
+sent to or readable by browser JavaScript. The console's own CSP
+(``connect-src 'self'``) is deliberately left untouched -- the browser never
+makes a cross-origin request, so it never needs to. Authorizing or rejecting a
+response action is not exposed through this console; it stays a direct
+analyst action against Manager (e.g. via ``curl``), consistent with this
+server staying GET-only and never gaining a route that mutates anything.
+
 Not in V1, by design: authentication, database, message queue, WebSockets, TLS.
 The server binds ``127.0.0.1`` by default; it is a local development / demo tool.
 """
@@ -17,6 +31,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -76,7 +93,38 @@ def read_alerts(alerts_file: Path) -> list[dict[str, Any]]:
     return alerts
 
 
-def make_handler(alerts_file: Path) -> type[BaseHTTPRequestHandler]:
+class ManagerProxyError(Exception):
+    """Raised when the server-side Manager call itself fails (timeout,
+    connection refused, malformed response) -- distinct from Manager
+    returning a real HTTP error status, which is instead passed through
+    verbatim so the browser sees the same status Manager gave."""
+
+
+def fetch_response_actions(manager_url: str, manager_token: str, *, timeout: float = 5.0) -> tuple[int, bytes]:
+    """Server-side-only call to Manager's GET /api/v1/response-actions.
+
+    The analyst bearer token is attached here and never leaves this process;
+    the browser only ever talks to this console, same-origin. Returns
+    Manager's own (status_code, body) verbatim on any HTTP response (so a
+    401/403 from Manager surfaces as-is); raises ManagerProxyError only when
+    the request itself could not be completed at all.
+    """
+    request = urllib.request.Request(
+        manager_url.rstrip("/") + "/api/v1/response-actions",
+        headers={"Authorization": f"Bearer {manager_token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - operator-configured URL
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise ManagerProxyError(str(exc)) from exc
+
+
+def make_handler(
+    alerts_file: Path, manager_url: str | None = None, manager_token: str | None = None
+) -> type[BaseHTTPRequestHandler]:
     class ConsoleHandler(BaseHTTPRequestHandler):
         server_version = "PanopticonConsole/1.0"
         sys_version = ""  # don't advertise the Python version in the Server header
@@ -125,8 +173,25 @@ def make_handler(alerts_file: Path) -> type[BaseHTTPRequestHandler]:
             elif route == "/api/alerts":
                 body = json.dumps(read_alerts(alerts_file)).encode("utf-8")
                 self._send_bytes(200, body, "application/json; charset=utf-8")
+            elif route == "/api/response-actions":
+                self._handle_response_actions()
             else:
                 self._not_found()
+
+        def _handle_response_actions(self) -> None:
+            if not manager_url or not manager_token:
+                body = json.dumps(
+                    {"error": "Manager connection not configured (--manager-url / PANOPTICON_MANAGER_TOKEN)"}
+                ).encode("utf-8")
+                self._send_bytes(503, body, "application/json; charset=utf-8")
+                return
+            try:
+                status, body = fetch_response_actions(manager_url, manager_token)
+            except ManagerProxyError as exc:
+                body = json.dumps({"error": f"could not reach Manager: {exc}"}).encode("utf-8")
+                self._send_bytes(502, body, "application/json; charset=utf-8")
+                return
+            self._send_bytes(status, body, "application/json; charset=utf-8")
 
         def do_HEAD(self):  # noqa: N802
             self.do_GET()
@@ -134,9 +199,11 @@ def make_handler(alerts_file: Path) -> type[BaseHTTPRequestHandler]:
     return ConsoleHandler
 
 
-def build_server(alerts_file: Path, host: str, port: int) -> ThreadingHTTPServer:
+def build_server(
+    alerts_file: Path, host: str, port: int, manager_url: str | None = None, manager_token: str | None = None
+) -> ThreadingHTTPServer:
     """Construct (but do not start) the console HTTP server."""
-    return ThreadingHTTPServer((host, port), make_handler(alerts_file))
+    return ThreadingHTTPServer((host, port), make_handler(alerts_file, manager_url, manager_token))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -156,10 +223,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Bind address. Left at localhost for a local demo tool; only widen deliberately.",
     )
     parser.add_argument("--port", type=int, default=8787, help="Bind port")
+    parser.add_argument(
+        "--manager-url",
+        default=None,
+        help="Optional Manager base URL (e.g. https://manager.internal). When set together with "
+        "the PANOPTICON_MANAGER_TOKEN environment variable, enables the read-only response-actions "
+        "panel -- this server calls Manager server-side; the browser never sees the token.",
+    )
     args = parser.parse_args(argv)
 
     alerts_file = Path(args.alerts_file).expanduser()
-    server = build_server(alerts_file, args.host, args.port)
+    manager_token = os.environ.get("PANOPTICON_MANAGER_TOKEN")
+    server = build_server(alerts_file, args.host, args.port, args.manager_url, manager_token)
+    if args.manager_url and not manager_token:
+        print("[*] --manager-url set but PANOPTICON_MANAGER_TOKEN is not -- response-actions panel disabled")
     print(f"[*] Panopticon Console watching: {alerts_file}")
     if not alerts_file.exists():
         print("[*] (alerts file does not exist yet - it will appear once the engine runs)")

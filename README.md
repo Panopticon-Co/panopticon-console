@@ -14,11 +14,14 @@ web page, so a human can see that a detection fired.
 | Reading the engine's alert NDJSON | Detection logic |
 | Presenting alerts to a human | `Alert` creation / serialization |
 | Polling for new alerts | Telemetry collection |
-| | Remediation / response |
+| Displaying Manager's response-action queue (optional, read-only) | Remediation / response, or any decision on it |
 
-The integration boundary is **the alert file on disk**. The console does not
-import the detection engine and makes no network call to it. No database, no
-message queue, no WebSockets, no authentication — none of that is a V1
+The primary integration boundary is **the alert file on disk** for
+detection-engine: the console does not import it and makes no network call to
+it. Optionally, this server (not the browser) can also poll `panopticon-manager`
+over HTTP for a **read-only** view of its response-action approval queue — see
+"Response actions (optional)" below. No database, no message queue, no
+WebSockets, no browser-facing authentication — none of that is a V1
 requirement. It is a local development / demo tool and binds `127.0.0.1` by
 default.
 
@@ -39,6 +42,7 @@ Then open <http://127.0.0.1:8787>.
 | `--alerts-file` | *(required)* | Path to the engine's `--output-file`. May not exist yet — the console starts anyway and picks it up once it appears. |
 | `--host` | `127.0.0.1` | Bind address. Only widen deliberately. |
 | `--port` | `8787` | Bind port. |
+| `--manager-url` | *(none)* | Optional `panopticon-manager` base URL. Combined with the `PANOPTICON_MANAGER_TOKEN` environment variable, enables the read-only response-actions panel. |
 
 ### HTTP surface
 
@@ -47,6 +51,7 @@ Then open <http://127.0.0.1:8787>.
 | `GET /` | The viewer page (`static/index.html`). |
 | `GET /app.js` | The client script. |
 | `GET /api/alerts` | `application/json` array of alert objects, in file order. Missing / unreadable file → `[]`. Malformed lines are skipped. |
+| `GET /api/response-actions` | Same-origin proxy to Manager's `GET /api/v1/response-actions`, read-only. `503` if `--manager-url`/`PANOPTICON_MANAGER_TOKEN` aren't both configured; `502` if Manager can't be reached; otherwise Manager's own status and body, passed through verbatim. |
 
 The page polls `/api/alerts` every 3 seconds and shows timestamp, rule ID,
 severity + Wazuh level, MITRE tactic/technique, title, and the evidence
@@ -67,6 +72,22 @@ ever re-appends an already-delivered alert (e.g. a restart racing its own
 delivery ack) the browser shows it once. The `/api/alerts` API itself is
 unchanged: it passes every line through untouched.
 
+## Response actions (optional)
+
+Set `--manager-url` and the `PANOPTICON_MANAGER_TOKEN` environment variable
+(an analyst bearer token, see `panopticon-manager`'s
+`POST /api/v1/analysts/enroll`) to show a read-only "Response actions" panel
+alongside the alert feed. The analyst token is a **server-side** secret: this
+console's own Python process attaches it to its outbound call to Manager,
+and the browser only ever talks to this console, same-origin
+(`GET /api/response-actions`) — it never receives the token and never calls
+Manager directly. The console's existing `Content-Security-Policy`
+(`connect-src 'self'`) is unchanged. Authorizing or rejecting a pending
+response action is intentionally **not** exposed here — that stays a direct
+analyst action against Manager (e.g. `curl -H "Authorization: Bearer $TOKEN"
+-X POST https://manager.example/api/v1/response-actions/<id>/authorize`),
+consistent with this console never gaining a route that mutates anything.
+
 ## Security notes
 
 - Alert evidence carries attacker-influenced strings (process command lines).
@@ -74,10 +95,12 @@ unchanged: it passes every line through untouched.
   `innerHTML` string-building — and the server sends
   `Content-Security-Policy: default-src 'none'; script-src 'self'; …` plus
   `X-Content-Type-Options: nosniff` as a second layer.
-- Only the three routes above resolve. There is no filesystem path mapping, so
+- Only the four routes above resolve. There is no filesystem path mapping, so
   request paths cannot be turned into arbitrary file reads.
-- Default bind is localhost. There is no auth because there is nothing
-  multi-user about a local demo; do not add one to paper over exposing it.
+- Default bind is localhost. There is no browser-facing auth because there is
+  nothing multi-user about a local demo; do not add one to paper over
+  exposing it. The optional Manager analyst token is a server-side secret
+  (an environment variable), never a browser credential.
 
 ## Test
 
@@ -92,6 +115,11 @@ HTTP tests (`tests/test_http.py`) start a real server on an ephemeral port and
 check the static routes, security headers, 404s, `HEAD`, the `/api/alerts`
 payload and field set, live reflection of file updates, injection-payload
 pass-through, and that two servers serve their own distinct `--alerts-file`.
+`tests/test_response_actions_proxy.py` covers `/api/response-actions`: 503
+when Manager isn't configured, 502 when it's unreachable, Manager's own
+status/body passed through verbatim, and that the analyst token never
+appears in what the browser receives. `tests/test_response_panel.cjs`
+(Node) exercises the client-side panel against a mocked `fetch`.
 
 ## The full V1 demonstration
 
