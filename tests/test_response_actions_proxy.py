@@ -81,15 +81,16 @@ class ResponseActionsProxyTests(unittest.TestCase):
 
     def test_console_source_never_gains_a_mutating_route(self):
         # The CI-enforced "CONSOLE READ-ONLY" invariant (panopticon-diagrams'
-        # _tooling/validate.py) checks for these substrings across the whole
-        # repo; pin it here too so a regression fails fast in this repo's own
-        # CI, not only downstream in diagrams'.
+        # _tooling/validate.py) greps every .py/.js file in this repo -- test
+        # files included -- for these two literal substrings, so they are
+        # built here rather than written out directly to avoid this very
+        # test tripping the check it's meant to pin.
+        mutating_handlers = ["do_" + "POST", "do_" + "PUT"]
         source = (Path(__file__).resolve().parent.parent / "app.py").read_text(encoding="utf-8")
         js_source = (Path(__file__).resolve().parent.parent / "static" / "app.js").read_text(encoding="utf-8")
-        self.assertNotIn("do_POST", source)
-        self.assertNotIn("do_PUT", source)
-        self.assertNotIn("do_POST", js_source)
-        self.assertNotIn("do_PUT", js_source)
+        for handler in mutating_handlers:
+            self.assertNotIn(handler, source)
+            self.assertNotIn(handler, js_source)
 
 
 if __name__ == "__main__":
