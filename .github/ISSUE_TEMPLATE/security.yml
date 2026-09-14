@@ -1,0 +1,15 @@
+name: Security Vulnerability
+description: Do not file security vulnerabilities as public issues
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report security vulnerabilities through public GitHub
+        issues.**
+
+        Please report privately via GitHub Security Advisories instead:
+
+        https://github.com/Panopticon-Co/panopticon-console/security/advisories/new
+
+        See `SECURITY.md` for what to include in your report.

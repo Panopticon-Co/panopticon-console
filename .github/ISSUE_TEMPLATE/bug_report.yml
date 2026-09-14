@@ -1,0 +1,32 @@
+name: Bug Report
+description: Report a bug in panopticon-console
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: What unexpected behavior occurred?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Command used to start the console, browser used, and what you clicked/saw.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment Info
+      placeholder: OS, Python version, browser
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        If this is a security vulnerability (XSS via alert evidence, CSP
+        bypass, analyst-token leakage), please do **not** file it here —
+        see `SECURITY.md` and report privately via GitHub Security
+        Advisories instead.

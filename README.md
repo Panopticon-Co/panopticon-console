@@ -170,3 +170,35 @@ node tests/test_dashboard.cjs
 These checks exercise the client with a minimal DOM model, including filters,
 pagination, deduplication, detail values, and connection failure/recovery. They
 are not browser layout tests.
+
+## Stack
+
+Python 3 standard library only on the server (`app.py`, `http.server`) — no
+framework, no `pip install`, no `package.json`. The client is vanilla HTML/CSS/
+JavaScript (`static/index.html`, `static/app.js`) served directly, with no
+build step. Node.js is used only to run the `.cjs` test scripts in `tests/`
+(`node --check`, no npm dependencies) — this is **not** a Next.js/React/
+TypeScript project.
+
+## What this is not (yet)
+
+To be explicit about scope rather than implying more than exists: there is no
+browser-facing authentication, no database, no WebSockets, and no route that
+mutates state (authorizing/rejecting a response action is deliberately not
+exposed here — see "Response actions (optional)" above). This is a local
+development/demo viewer, not a multi-user production console.
+
+## Contributing / Security / License
+
+- See `CONTRIBUTING.md` for development setup.
+- See `SECURITY.md` for vulnerability reporting.
+- See `CODE_OF_CONDUCT.md` for community standards.
+- Licensed under the [MIT License](LICENSE).
+
+## Integration with other Panopticon repos
+
+- [`panopticon-manager`](https://github.com/Panopticon-Co/panopticon-manager) — optional read-only response-actions source (see "Response actions (optional)" above).
+- [`panopticon-detection-engine`](https://github.com/Panopticon-Co/panopticon-detection-engine) — writes the alert NDJSON file this console reads.
+- [`panopticon-agent`](https://github.com/Panopticon-Co/panopticon-agent) / [`panopticon-linux-agent`](https://github.com/Panopticon-Co/panopticon-linux-agent) — upstream telemetry producers, not integrated directly with this console.
+- [`panopticon-contracts`](https://github.com/Panopticon-Co/panopticon-contracts) — canonical wire contracts used elsewhere in the pipeline.
+- [Panopticon-Co](https://github.com/Panopticon-Co) — organization home.
