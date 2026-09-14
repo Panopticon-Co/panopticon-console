@@ -129,6 +129,8 @@ Schema 0.2 → detection engine → `DET-PROC-011` → `alerts.ndjson` → this 
 
 ## Dashboard
 
+![.github/screenshots/panopticon-console.jpeg](.github/screenshots/panopticon-console.jpeg)
+
 ### Appearance and theme tokens
 
 Use Appearance in the sidebar to choose Emerald, Ocean, Violet, or Amber and
