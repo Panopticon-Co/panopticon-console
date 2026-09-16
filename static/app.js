@@ -156,24 +156,58 @@ poll(); setInterval(poll, POLL_INTERVAL_MS);
 
 
 // RESPONSE ACTIONS PANEL
-// Read-only. Calls this console's own same-origin /api/response-actions
-// route only -- never Manager directly, so the page's CSP (connect-src
-// 'self') stays untouched and no analyst credential ever needs to reach
-// browser JavaScript. The console's own server attaches the Manager token
-// server-side (see app.py's fetch_response_actions) when --manager-url and
-// PANOPTICON_MANAGER_TOKEN are configured; if they aren't, this route
-// answers 503 and the panel simply shows "unavailable". Authorizing or
-// rejecting a response action is intentionally not offered here -- that
-// stays a direct analyst action against Manager.
+// All browser calls are same-origin Console routes. The analyst credential
+// stays server-side; app.py attaches it when proxying decisions to Manager.
 document.addEventListener("DOMContentLoaded", () => {
   "use strict";
   const $ = (id) => document.getElementById(id);
   function text(v) { return v == null ? "—" : String(v); }
   function node(tag, value, cls) { const el = document.createElement(tag); if (value !== undefined) el.textContent = text(value); if (cls) el.className = cls; return el; }
+  function decisionCell(action) {
+    const cell = node("td");
+    if (action.lifecycle_state !== "PENDING") return cell;
+    const approve = node("button", "Approve");
+    const reject = node("button", "Reject");
+    approve.type = reject.type = "button";
+    approve.addEventListener("click", () => decide(action, "authorize", approve));
+    reject.addEventListener("click", () => decide(action, "reject", reject));
+    cell.append(approve, reject);
+    return cell;
+  }
   function rowFor(action) {
     const row = node("tr");
-    row.append(node("td", action.lifecycle_state), node("td", action.action), node("td", action.tier), node("td", action.alert_id), node("td", action.created_at), node("td", action.decided_reason));
+    row.append(node("td", action.lifecycle_state), node("td", action.action), node("td", action.tier), node("td", action.alert_id), node("td", action.created_at), node("td", action.decided_reason), decisionCell(action));
     return row;
+  }
+  async function decide(action, operation, button) {
+    if (button) button.disabled = true;
+    if (operation === "authorize") {
+      const destructive = ["KILL_PROCESS", "ISOLATE_HOST"].includes(action.action);
+      if (destructive) {
+        const expected = "APPROVE " + action.action + " " + action.alert_id;
+        const typed = typeof globalThis.prompt === "function" ? globalThis.prompt("Type exactly: " + expected) : null;
+        if (typed !== expected) { if (button) button.disabled = false; return; }
+      } else if (typeof globalThis.confirm === "function" && !globalThis.confirm("Approve " + action.action + " for " + action.alert_id + "?")) {
+        if (button) button.disabled = false; return;
+      }
+    }
+    let body;
+    if (operation === "reject") {
+      const reason = typeof globalThis.prompt === "function" ? globalThis.prompt("Reason for rejection:", "Analyst rejected after review") : null;
+      if (!reason || !reason.trim()) { if (button) button.disabled = false; return; }
+      body = JSON.stringify({reason: reason.trim()});
+    }
+    try {
+      const response = await fetch("/api/response-actions/" + encodeURIComponent(action.response_id) + "/" + operation, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body, cache: "no-store"
+      });
+      if (!response.ok) throw new Error("Manager returned HTTP " + response.status);
+      $("response-status").textContent = "Decision recorded · refreshing…";
+      await pollResponseActions();
+    } catch (error) {
+      $("response-status").textContent = "Decision failed: " + error.message;
+      if (button) button.disabled = false;
+    }
   }
   async function pollResponseActions() {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8000);

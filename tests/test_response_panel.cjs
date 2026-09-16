@@ -31,8 +31,9 @@ vm.runInContext(fs.readFileSync('static/app.js', 'utf8').split('// RESPONSE ACTI
   assert.equal(el('response-empty').hidden, true);
   assert.equal(el('response-body').children.length, 1);
   assert.equal(el('response-body').children[0].children[0].textContent, 'PENDING');
-  // Read-only: no authorize/reject control exists anywhere in the rendered row.
-  assert.equal(el('response-body').children[0].children.length, 6);
+  // Pending actions expose analyst decision controls in the final cell.
+  assert.equal(el('response-body').children[0].children.length, 7);
+  assert.equal(el('response-body').children[0].children[6].children.length, 2);
 
   status = 503; payload = { error: 'Manager connection not configured (--manager-url / PANOPTICON_MANAGER_TOKEN)' };
   await el('response-refresh').listeners.click();
@@ -44,5 +45,5 @@ vm.runInContext(fs.readFileSync('static/app.js', 'utf8').split('// RESPONSE ACTI
   await el('response-refresh').listeners.click();
   assert.equal(el('response-status').textContent, 'Cannot reach the console server');
 
-  console.log('PASS: response actions panel renders, reports unavailable/offline states, and offers no authorize/reject control');
+  console.log('PASS: response actions panel renders, reports unavailable/offline states, and exposes pending decision controls');
 })().catch(e => { console.error(e); process.exitCode = 1; });

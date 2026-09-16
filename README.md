@@ -14,12 +14,12 @@ web page, so a human can see that a detection fired.
 | Reading the engine's alert NDJSON | Detection logic |
 | Presenting alerts to a human | `Alert` creation / serialization |
 | Polling for new alerts | Telemetry collection |
-| Displaying Manager's response-action queue (optional, read-only) | Remediation / response, or any decision on it |
+| Displaying Manager's response-action queue and relaying analyst decisions (optional) | Remediation / response execution |
 
 The primary integration boundary is **the alert file on disk** for
 detection-engine: the console does not import it and makes no network call to
 it. Optionally, this server (not the browser) can also poll `panopticon-manager`
-over HTTP for a **read-only** view of its response-action approval queue — see
+over HTTP for a view of its response-action approval queue and analyst decisions — see
 "Response actions (optional)" below. No database, no message queue, no
 WebSockets, no browser-facing authentication — none of that is a V1
 requirement. It is a local development / demo tool and binds `127.0.0.1` by
@@ -42,7 +42,7 @@ Then open <http://127.0.0.1:8787>.
 | `--alerts-file` | *(required)* | Path to the engine's `--output-file`. May not exist yet — the console starts anyway and picks it up once it appears. |
 | `--host` | `127.0.0.1` | Bind address. Only widen deliberately. |
 | `--port` | `8787` | Bind port. |
-| `--manager-url` | *(none)* | Optional `panopticon-manager` base URL. Combined with the `PANOPTICON_MANAGER_TOKEN` environment variable, enables the read-only response-actions panel. |
+| `--manager-url` | *(none)* | Optional `panopticon-manager` base URL. Combined with the `PANOPTICON_MANAGER_TOKEN` environment variable, enables the response-actions queue and analyst decision controls. |
 
 ### HTTP surface
 
@@ -51,7 +51,9 @@ Then open <http://127.0.0.1:8787>.
 | `GET /` | The viewer page (`static/index.html`). |
 | `GET /app.js` | The client script. |
 | `GET /api/alerts` | `application/json` array of alert objects, in file order. Missing / unreadable file → `[]`. Malformed lines are skipped. |
-| `GET /api/response-actions` | Same-origin proxy to Manager's `GET /api/v1/response-actions`, read-only. `503` if `--manager-url`/`PANOPTICON_MANAGER_TOKEN` aren't both configured; `502` if Manager can't be reached; otherwise Manager's own status and body, passed through verbatim. |
+| `GET /api/response-actions` | Same-origin proxy to Manager's `GET /api/v1/response-actions`; `503` if not configured and `502` if Manager cannot be reached. |
+| `POST /api/response-actions/{id}/authorize` | Same-origin analyst approval proxy. Manager remains the authority. |
+| `POST /api/response-actions/{id}/reject` | Same-origin analyst rejection proxy. Requires a non-empty JSON `reason`. |
 
 The page polls `/api/alerts` every 3 seconds and shows timestamp, rule ID,
 severity + Wazuh level, MITRE tactic/technique, title, and the evidence
@@ -76,17 +78,15 @@ unchanged: it passes every line through untouched.
 
 Set `--manager-url` and the `PANOPTICON_MANAGER_TOKEN` environment variable
 (an analyst bearer token, see `panopticon-manager`'s
-`POST /api/v1/analysts/enroll`) to show a read-only "Response actions" panel
-alongside the alert feed. The analyst token is a **server-side** secret: this
-console's own Python process attaches it to its outbound call to Manager,
-and the browser only ever talks to this console, same-origin
-(`GET /api/response-actions`) — it never receives the token and never calls
-Manager directly. The console's existing `Content-Security-Policy`
-(`connect-src 'self'`) is unchanged. Authorizing or rejecting a pending
-response action is intentionally **not** exposed here — that stays a direct
-analyst action against Manager (e.g. `curl -H "Authorization: Bearer $TOKEN"
--X POST https://manager.example/api/v1/response-actions/<id>/authorize`),
-consistent with this console never gaining a route that mutates anything.
+`POST /api/v1/analysts/enroll`) to show the "Response actions" panel
+alongside the alert feed. Pending actions have **Approve** and **Reject**
+controls. The analyst token is a **server-side** secret: this console's
+Python process attaches it to outbound calls to Manager, and the browser only
+ever talks to this console, same-origin. For rejection, the analyst supplies
+a non-empty reason. Destructive approvals (`KILL_PROCESS` and `ISOLATE_HOST`)
+require typing an exact confirmation phrase; Manager remains the authority and
+the Console never executes response actions itself. The console's existing
+`Content-Security-Policy` (`connect-src 'self'`) is unchanged.
 
 ## Security notes
 
@@ -183,10 +183,9 @@ TypeScript project.
 ## What this is not (yet)
 
 To be explicit about scope rather than implying more than exists: there is no
-browser-facing authentication, no database, no WebSockets, and no route that
-mutates state (authorizing/rejecting a response action is deliberately not
-exposed here — see "Response actions (optional)" above). This is a local
-development/demo viewer, not a multi-user production console.
+browser-facing authentication, no database, and no WebSockets. The Console
+relays analyst decisions to Manager but never executes remediation itself. This
+is a local development/demo viewer, not a multi-user production console.
 
 ## Contributing / Security / License
 
@@ -197,7 +196,7 @@ development/demo viewer, not a multi-user production console.
 
 ## Integration with other Panopticon repos
 
-- [`panopticon-manager`](https://github.com/Panopticon-Co/panopticon-manager) — optional read-only response-actions source (see "Response actions (optional)" above).
+- [`panopticon-manager`](https://github.com/Panopticon-Co/panopticon-manager) — optional response-actions source (see "Response actions (optional)" above).
 - [`panopticon-detection-engine`](https://github.com/Panopticon-Co/panopticon-detection-engine) — writes the alert NDJSON file this console reads.
 - [`panopticon-agent`](https://github.com/Panopticon-Co/panopticon-agent) / [`panopticon-linux-agent`](https://github.com/Panopticon-Co/panopticon-linux-agent) — upstream telemetry producers, not integrated directly with this console.
 - [`panopticon-contracts`](https://github.com/Panopticon-Co/panopticon-contracts) — canonical wire contracts used elsewhere in the pipeline.
