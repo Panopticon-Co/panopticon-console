@@ -154,7 +154,7 @@ class ManagerAlertsRouteTests(_ServerMixin, unittest.TestCase):
             "severity=urgent",
             "source=ml",
             "limit=0",
-            "limit=1001",
+            "limit=201",  # above Manager's own cap of 200
             "limit=abc",
             "incident_id=INC%2F..%2Fx",
             "before=2026-10-25%2008:00",  # a space is not a cursor character

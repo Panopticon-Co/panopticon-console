@@ -88,7 +88,7 @@
 document.addEventListener("DOMContentLoaded", () => {
 "use strict";
 // Evidence is untrusted: all alert values use textContent, never HTML.
-const POLL_INTERVAL_MS = 3000, PAGE_SIZE = 25, MANAGER_ALERT_LIMIT = 500;
+const POLL_INTERVAL_MS = 3000, PAGE_SIZE = 25, MANAGER_ALERT_LIMIT = 200;
 const $ = (id) => document.getElementById(id);
 const FAMILIES = ["process", "network", "file", "registry", "image_load"];
 const SOURCES = ["rule", "stateful", "behavioral", "correlation"];

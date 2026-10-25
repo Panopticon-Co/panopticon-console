@@ -94,8 +94,12 @@ def _pattern(regex: re.Pattern) -> Callable[[str], Optional[str]]:
     return check
 
 
+# Manager caps list endpoints at 200 (it answers 422 above that).
+MAX_LIMIT = 200
+
+
 def _limit(value: str) -> Optional[str]:
-    if value.isdigit() and 1 <= int(value) <= 1000:
+    if value.isdigit() and 1 <= int(value) <= MAX_LIMIT:
         return str(int(value))
     return None
 

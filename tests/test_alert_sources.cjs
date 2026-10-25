@@ -59,7 +59,7 @@ vm.runInContext(fs.readFileSync('static/app.js', 'utf8').split('// DASHBOARD INI
 
   // Manager mode asks for a bounded page on later polls.
   await el('refresh').listeners.click();
-  assert.equal(urls[urls.length - 1], '/api/alerts?limit=500');
+  assert.equal(urls[urls.length - 1], '/api/alerts?limit=200');
 
   // Detail: confidence label, matched conditions, evidence without duplicates, recommendation.
   el('alerts-body').children[3].children[1].children[0].listeners.click();
