@@ -1,11 +1,19 @@
 # panopticon-console
 
-Minimal V1 alert viewer for the **Panopticon&Co** EDR platform.
+Alert, incident and response viewer for the **Panopticon&Co** EDR platform.
 
-The console reads the Alert NDJSON file that
-[`panopticon-detection-engine`](https://github.com/Panopticon-Co/panopticon-detection-engine)
-writes via its `--output-file` option and serves it as a single auto-polling
-web page, so a human can see that a detection fired.
+The console runs in one of two modes:
+
+- **Manager mode** (`--manager-url` + `PANOPTICON_MANAGER_TOKEN`): alerts,
+  incidents, pipeline status and response actions come from
+  [`panopticon-manager`](https://github.com/Panopticon-Co/panopticon-manager)'s
+  analyst API, proxied server-side. This is the capstone end-to-end demo path.
+- **File mode** (fallback when no Manager is configured): the console reads the
+  Alert NDJSON file that
+  [`panopticon-detection-engine`](https://github.com/Panopticon-Co/panopticon-detection-engine)
+  writes via its `--output-file` option. Only the alert feed is available.
+
+The page header always says which source is active.
 
 ## Scope (deliberately small)
 
@@ -14,7 +22,8 @@ web page, so a human can see that a detection fired.
 | Reading the engine's alert NDJSON | Detection logic |
 | Presenting alerts to a human | `Alert` creation / serialization |
 | Polling for new alerts | Telemetry collection |
-| Displaying Manager's response-action queue and relaying analyst decisions (optional) | Remediation / response execution |
+| Displaying Manager's incidents, pipeline status and response-action queue (optional) | Incident construction / scoring |
+| Relaying analyst decisions: approve/reject a response action, set an incident's status | Remediation / response execution |
 
 The primary integration boundary is **the alert file on disk** for
 detection-engine: the console does not import it and makes no network call to
@@ -31,18 +40,37 @@ Python 3.9+ standard library only. No `pip install`.
 
 ## Run
 
+Manager mode (alerts, incidents, status, response actions):
+
+```bash
+export PANOPTICON_MANAGER_TOKEN=...   # analyst token from Manager's POST /api/v1/analysts/enroll
+python app.py --manager-url http://127.0.0.1:8000
+```
+
+File mode (alert feed only):
+
 ```bash
 python app.py --alerts-file /path/to/panopticon-detection-engine/alerts.ndjson
 ```
 
-Then open <http://127.0.0.1:8787>.
+Then open <http://127.0.0.1:8787>. If both are given, Manager wins and the file
+is ignored; if Manager is configured but unreachable, `/api/alerts` returns
+`502` rather than silently falling back to a possibly stale file.
+
+No Manager to hand? `tests/fake_manager.py` is a tiny contract-shaped stand-in
+(one two-stage incident, three response actions) for demos and screenshots:
+
+```bash
+python tests/fake_manager.py --port 8799 --token demo-token &
+PANOPTICON_MANAGER_TOKEN=demo-token python app.py --manager-url http://127.0.0.1:8799
+```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--alerts-file` | *(required)* | Path to the engine's `--output-file`. May not exist yet — the console starts anyway and picks it up once it appears. |
+| `--alerts-file` | *(none)* | Path to the engine's `--output-file`, used in file mode. May not exist yet — the console starts anyway and picks it up once it appears. Required unless Manager mode is configured. |
 | `--host` | `127.0.0.1` | Bind address. Only widen deliberately. |
 | `--port` | `8787` | Bind port. |
-| `--manager-url` | *(none)* | Optional `panopticon-manager` base URL. Combined with the `PANOPTICON_MANAGER_TOKEN` environment variable, enables the response-actions queue and analyst decision controls. |
+| `--manager-url` | *(none)* | `panopticon-manager` base URL. Combined with the `PANOPTICON_MANAGER_TOKEN` environment variable, switches to Manager mode. A URL without a token stays in file mode. |
 
 ### HTTP surface
 
@@ -50,15 +78,76 @@ Then open <http://127.0.0.1:8787>.
 |---|---|
 | `GET /` | The viewer page (`static/index.html`). |
 | `GET /app.js` | The client script. |
-| `GET /api/alerts` | `application/json` array of alert objects, in file order. Missing / unreadable file → `[]`. Malformed lines are skipped. |
-| `GET /api/response-actions` | Same-origin proxy to Manager's `GET /api/v1/response-actions`; `503` if not configured and `502` if Manager cannot be reached. |
+| `GET /api/alerts` | `application/json` array of alert objects. Header `X-Panopticon-Alert-Source: manager` or `file`. Manager mode: proxies `GET /api/v1/alerts` and maps each row to `row.alert` plus Manager's `detection_source`, `incident_id`, `agent_id` columns (`next_before` → `X-Panopticon-Next-Before`). File mode: file order; missing file → `[]`; malformed lines skipped. Filters `severity`, `source`, `incident_id`, `host_id`, `rule_id`, `limit` (1–1000), `before` are whitelisted and validated in both modes; anything else → `400`. |
+| `GET /api/incidents` | Proxy to `GET /api/v1/incidents` (`status`, `host_id`, `limit` whitelisted). |
+| `GET /api/incidents/{id}` | Proxy to `GET /api/v1/incidents/{id}`; `id` must match `[A-Za-z0-9._:-]{1,128}`. |
+| `POST /api/incidents/{id}/status` | Proxy to Manager's status route. Body `{status, note?}`, `status` ∈ `open`, `investigating`, `resolved`, `false_positive`, `note` ≤ 2000 chars, no other keys, body ≤ 16 KB (`413`). |
+| `GET /api/status` | Proxy to `GET /api/v1/status`. |
+| `GET /api/response-actions` | Proxy to Manager's `GET /api/v1/response-actions`. |
 | `POST /api/response-actions/{id}/authorize` | Same-origin analyst approval proxy. Manager remains the authority. |
 | `POST /api/response-actions/{id}/reject` | Same-origin analyst rejection proxy. Requires a non-empty JSON `reason`. |
 
-The page polls `/api/alerts` every 3 seconds and shows timestamp, rule ID,
-severity + Wazuh level, MITRE tactic/technique, title, and the evidence
-key/value pairs. Rows whose `alert_id` was not present on the previous poll
-flash briefly.
+Every Manager route answers `503` when Manager isn't configured and `502` when
+it can't be reached; otherwise Manager's own status and body pass through
+verbatim (so a `401` from Manager shows up as `401`). The analyst token is never
+in a response to the browser.
+
+## Views
+
+All panels poll every 3 seconds. Open dialogs are refreshed in place only when
+their data changed, and polling never clears a note being typed.
+
+- **Overview** — pipeline tiles from `/api/status`: events pending (and
+  claimed), processed, failed, open incidents, pending approvals, last event
+  time, agents enrolled. Shown only when Manager reports status; otherwise the
+  page says status is not reported and the sidebar keeps "Collector health is
+  not reported by this console." These are queue counts, not collector health.
+  Below them, severity totals over all loaded alerts.
+- **Alert feed** — severity, detection (title, rule, incident link), **source**
+  badge (`rule` / `stateful` / `behavioral` / `correlation`, or `unknown` for
+  older alert lines), process, telemetry type, MITRE technique, time. Search
+  plus severity / source / telemetry filters. The alert detail shows the
+  description, host, agent, **rule confidence (prior, not calibrated)**,
+  matched conditions, the remaining evidence, and the `active_response`
+  recommendation, labelled as a recommendation that the engine does not execute.
+- **Incidents** — severity, id, score, tactics, stage count, root process,
+  status, last seen. The detail shows the attack chain and summary; a stage
+  timeline (time, rule, tactic/technique, process[pid], linked alert, or
+  "repeat suppressed" when `stages[].alert_id` is null); process lineage as a
+  tree; the causal path lines; the score breakdown with each context factor
+  itemised; the `why` reasons; member alerts (each opens the alert detail);
+  related response actions with command state and audit; the incident audit
+  trail; and **Investigating / Resolved / False positive** buttons with an
+  optional note. Incident scores are heuristic and their weights are not tuned
+  yet; the page says so.
+- **Response actions** — state, action and target, tier, alert, created,
+  reason, **command** state, per-action **audit** trail (collapsible), and
+  Approve/Reject on `PENDING` rows only.
+
+### Wording rule
+
+Every sentence about an outcome is derived from Manager's fields. The console
+says an action took effect only when the command's state is `SUCCEEDED`, and
+then says which command it was and that the *agent reported* it
+("Agent reported SUCCEEDED for KILL_PROCESS (host … · pid …) · command resp-…").
+Any other state is shown as-is with "no outcome reported yet". Nothing says
+"neutralized" or "blocked".
+
+### What is NOT shown
+
+- Per-collector / per-agent health. The status tiles count the event queue.
+- Raw telemetry events, and the provenance graph itself (only the incident's
+  lineage and causal-path lines that the engine already rendered).
+- Calibrated probabilities: `confidence` is a rule author's prior.
+- Alerts beyond the newest 500 in Manager mode (`before` paging is supported by
+  the API route but not yet exposed in the UI).
+- Cross-host campaigns (out of scope in the engine).
+- Any response execution. The console relays decisions; Manager authorizes and
+  dispatches, and the agent reports results.
+
+### File-mode behaviour
+
+Rows whose `alert_id` was not present on the previous poll flash briefly.
 
 ### Live runs (detection-engine V2)
 
@@ -95,8 +184,10 @@ the Console never executes response actions itself. The console's existing
   `innerHTML` string-building — and the server sends
   `Content-Security-Policy: default-src 'none'; script-src 'self'; …` plus
   `X-Content-Type-Options: nosniff` as a second layer.
-- Only the four routes above resolve. There is no filesystem path mapping, so
-  request paths cannot be turned into arbitrary file reads.
+- Only the routes above resolve. There is no filesystem path mapping, so
+  request paths cannot be turned into arbitrary file reads. Query parameters
+  and path ids are whitelisted before any request to Manager is built, and
+  POST bodies are bounded at 16 KB and re-serialised from validated fields.
 - Default bind is localhost. There is no browser-facing auth because there is
   nothing multi-user about a local demo; do not add one to paper over
   exposing it. The optional Manager analyst token is a server-side secret
@@ -118,8 +209,29 @@ pass-through, and that two servers serve their own distinct `--alerts-file`.
 `tests/test_response_actions_proxy.py` covers `/api/response-actions`: 503
 when Manager isn't configured, 502 when it's unreachable, Manager's own
 status/body passed through verbatim, and that the analyst token never
-appears in what the browser receives. `tests/test_response_panel.cjs`
-(Node) exercises the client-side panel against a mocked `fetch`.
+appears in what the browser receives.
+`tests/test_manager_proxy.py` covers the Manager-mode routes: alert row
+mapping, filter whitelisting and `400`s, `503`/`502`, verbatim pass-through,
+the incident status body validation and `413`, file-mode filters, and an
+end-to-end run against a loopback fake Manager that checks the bearer token is
+attached server-side.
+
+Node tests run the client against a minimal DOM and a mocked `fetch`
+(`for t in tests/*.cjs; do node "$t"; done`): `test_dashboard.cjs`,
+`test_theme.cjs`, `test_response_panel.cjs` (approve/reject only on
+`PENDING`, command state, audit), `test_alert_sources.cjs` (source badges,
+incident links, detail fields) and `test_incidents.cjs` (incident list and
+detail, status changes, status tiles).
+
+### Screenshots
+
+Taken with Playwright against `tests/fake_manager.py`:
+[overview](docs/screenshots/overview.png),
+[alert feed](docs/screenshots/alerts.png),
+[alert detail](docs/screenshots/alert-detail.png),
+[incidents](docs/screenshots/incidents.png),
+[incident detail](docs/screenshots/incident-detail.png),
+[response actions](docs/screenshots/response-actions.png).
 
 ## The full V1 demonstration
 
@@ -155,8 +267,8 @@ panel with the Close button or Escape.
 
 The feed refreshes every three seconds and retains the last received alerts if
 connection fails. Counts cover all loaded, deduplicated alerts, independently of
-filters. Feed connectivity does not indicate collector health. The console still
-reads the engine's existing alert file; no additional Python packages are needed.
+filters. Feed connectivity does not indicate collector health. No additional
+Python packages are needed in either mode.
 
 After updating the static files, refresh the browser at http://127.0.0.1:8787.
 There is no server restart required for these dashboard changes.
@@ -196,7 +308,7 @@ is a local development/demo viewer, not a multi-user production console.
 
 ## Integration with other Panopticon repos
 
-- [`panopticon-manager`](https://github.com/Panopticon-Co/panopticon-manager) — optional response-actions source (see "Response actions (optional)" above).
+- [`panopticon-manager`](https://github.com/Panopticon-Co/panopticon-manager) — Manager mode source for alerts, incidents, status and response actions (contract: `panopticon-detection-engine/docs/integration/CONTRACT.md` §7).
 - [`panopticon-detection-engine`](https://github.com/Panopticon-Co/panopticon-detection-engine) — writes the alert NDJSON file this console reads.
 - [`panopticon-agent`](https://github.com/Panopticon-Co/panopticon-agent) / [`panopticon-linux-agent`](https://github.com/Panopticon-Co/panopticon-linux-agent) — upstream telemetry producers, not integrated directly with this console.
 - [`panopticon-contracts`](https://github.com/Panopticon-Co/panopticon-contracts) — canonical wire contracts used elsewhere in the pipeline.
