@@ -28,8 +28,9 @@ class ResponseActionsProxyTests(unittest.TestCase):
         port = server.server_address[1]
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        self.addCleanup(server.shutdown)
-        self.addCleanup(lambda: thread.join(timeout=5))
+        # One cleanup, shutdown first: addCleanup is LIFO, so a separate
+        # join registered after shutdown would wait its full timeout.
+        self.addCleanup(lambda: (server.shutdown(), thread.join(timeout=5)))
         return port
 
     def _request(self, port, path, method="GET", body=None):
