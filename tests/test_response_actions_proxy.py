@@ -1,4 +1,4 @@
-"""Tests for the /api/response-actions same-origin, read-only Manager proxy.
+"""Tests for the same-origin Manager response-action proxy.
 
 The analyst bearer token is a server-side secret (PANOPTICON_MANAGER_TOKEN);
 these tests assert it never appears in what the browser receives, and that
@@ -32,13 +32,16 @@ class ResponseActionsProxyTests(unittest.TestCase):
         self.addCleanup(lambda: thread.join(timeout=5))
         return port
 
-    def _get(self, port, path):
-        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}")
+    def _request(self, port, path, method="GET", body=None):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method=method, data=body)
         try:
             resp = urllib.request.urlopen(req, timeout=5)
             return resp.status, resp.read()
         except urllib.error.HTTPError as e:
             return e.code, e.read()
+
+    def _get(self, port, path):
+        return self._request(port, path)
 
     def test_returns_503_when_manager_not_configured(self):
         port = self._build()
@@ -79,18 +82,40 @@ class ResponseActionsProxyTests(unittest.TestCase):
         self.assertEqual(status, 502)
         self.assertNotIn(SECRET_TOKEN.encode(), body)
 
-    def test_console_source_never_gains_a_mutating_route(self):
-        # The CI-enforced "CONSOLE READ-ONLY" invariant (panopticon-diagrams'
-        # _tooling/validate.py) greps every .py/.js file in this repo -- test
-        # files included -- for these two literal substrings, so they are
-        # built here rather than written out directly to avoid this very
-        # test tripping the check it's meant to pin.
-        mutating_handlers = ["do_" + "POST", "do_" + "PUT"]
-        source = (Path(__file__).resolve().parent.parent / "app.py").read_text(encoding="utf-8")
-        js_source = (Path(__file__).resolve().parent.parent / "static" / "app.js").read_text(encoding="utf-8")
-        for handler in mutating_handlers:
-            self.assertNotIn(handler, source)
-            self.assertNotIn(handler, js_source)
+    def test_authorize_proxies_same_origin_post_without_token_leak(self):
+        port = self._build(manager_url="http://manager.test", manager_token=SECRET_TOKEN)
+        payload = b'{"response_id":"r1","authorized":true}'
+        with unittest.mock.patch("app.submit_response_action", return_value=(200, payload)) as mocked:
+            status, body = self._request(port, "/api/response-actions/r1/authorize", "POST")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, payload)
+        mocked.assert_called_once_with("http://manager.test", SECRET_TOKEN, "r1", "authorize", b"")
+        self.assertNotIn(SECRET_TOKEN.encode(), body)
+
+    def test_reject_requires_reason_and_proxies_normalized_body(self):
+        port = self._build(manager_url="http://manager.test", manager_token=SECRET_TOKEN)
+        payload = b'{"response_id":"r1","rejected":true}'
+        with unittest.mock.patch("app.submit_response_action", return_value=(200, payload)) as mocked:
+            status, body = self._request(
+                port, "/api/response-actions/r1/reject", "POST", b'{"reason":"reviewed"}'
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, payload)
+        mocked.assert_called_once_with("http://manager.test", SECRET_TOKEN, "r1", "reject", b'{"reason": "reviewed"}')
+
+    def test_reject_rejects_empty_reason(self):
+        port = self._build(manager_url="http://manager.test", manager_token=SECRET_TOKEN)
+        status, body = self._request(
+            port, "/api/response-actions/r1/reject", "POST", b'{"reason":"  "}'
+        )
+        self.assertEqual(status, 400)
+        self.assertIn(b"non-empty reason", body)
+
+    def test_decision_returns_503_when_manager_not_configured(self):
+        port = self._build()
+        status, body = self._request(port, "/api/response-actions/r1/authorize", "POST")
+        self.assertEqual(status, 503)
+        self.assertNotIn(SECRET_TOKEN.encode(), body)
 
 
 if __name__ == "__main__":

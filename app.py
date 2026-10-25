@@ -11,18 +11,11 @@ presents it. It never imports the detection engine and never calls it over the
 network - the integration surface is the NDJSON file on disk, nothing else.
 
 Optionally, if ``--manager-url`` and a ``PANOPTICON_MANAGER_TOKEN`` analyst
-bearer token are configured, this server also proxies a single read-only
-Manager endpoint (``GET /api/response-actions`` here -> ``GET
-/api/v1/response-actions`` on Manager) so the dashboard can show the response
-approval queue. This is a same-origin, read-only, credential-free proxy from
-the browser's perspective: the analyst token lives only in this server
-process's environment, is attached to the outbound request here, and is never
-sent to or readable by browser JavaScript. The console's own CSP
-(``connect-src 'self'``) is deliberately left untouched -- the browser never
-makes a cross-origin request, so it never needs to. Authorizing or rejecting a
-response action is not exposed through this console; it stays a direct
-analyst action against Manager (e.g. via ``curl``), consistent with this
-server staying GET-only and never gaining a route that mutates anything.
+bearer token are configured, this server proxies the Manager response-action
+queue and its analyst decisions. The token lives only in this server process,
+is attached to outbound requests, and is never sent to browser JavaScript. The
+browser uses same-origin routes, so the existing restrictive CSP remains in
+place.
 
 Not in V1, by design: authentication, database, message queue, WebSockets, TLS.
 The server binds ``127.0.0.1`` by default; it is a local development / demo tool.
@@ -32,7 +25,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -122,6 +117,42 @@ def fetch_response_actions(manager_url: str, manager_token: str, *, timeout: flo
         raise ManagerProxyError(str(exc)) from exc
 
 
+def submit_response_action(
+    manager_url: str,
+    manager_token: str,
+    response_id: str,
+    operation: str,
+    payload: bytes = b"",
+    *,
+    timeout: float = 5.0,
+) -> tuple[int, bytes]:
+    """Proxy one analyst decision to Manager without exposing credentials."""
+    if operation not in {"authorize", "reject"} or not re.fullmatch(
+        r"[A-Za-z0-9._:-]+", response_id
+    ):
+        raise ValueError("invalid response action route")
+    request = urllib.request.Request(
+        manager_url.rstrip("/")
+        + "/api/v1/response-actions/"
+        + urllib.parse.quote(response_id, safe="")
+        + "/"
+        + operation,
+        data=payload if operation == "reject" else None,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {manager_token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise ManagerProxyError(str(exc)) from exc
+
+
 def make_handler(
     alerts_file: Path, manager_url: str | None = None, manager_token: str | None = None
 ) -> type[BaseHTTPRequestHandler]:
@@ -178,6 +209,13 @@ def make_handler(
             else:
                 self._not_found()
 
+        def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
+            match = re.fullmatch(r"/api/response-actions/([^/]+)/(authorize|reject)", self.path)
+            if match is None:
+                self._not_found()
+                return
+            self._handle_response_action_decision(match.group(1), match.group(2))
+
         def _handle_response_actions(self) -> None:
             if not manager_url or not manager_token:
                 body = json.dumps(
@@ -188,6 +226,43 @@ def make_handler(
             try:
                 status, body = fetch_response_actions(manager_url, manager_token)
             except ManagerProxyError as exc:
+                body = json.dumps({"error": f"could not reach Manager: {exc}"}).encode("utf-8")
+                self._send_bytes(502, body, "application/json; charset=utf-8")
+                return
+            self._send_bytes(status, body, "application/json; charset=utf-8")
+
+        def _handle_response_action_decision(self, response_id: str, operation: str) -> None:
+            if not manager_url or not manager_token:
+                body = json.dumps(
+                    {"error": "Manager connection not configured (--manager-url / PANOPTICON_MANAGER_TOKEN)"}
+                ).encode("utf-8")
+                self._send_bytes(503, body, "application/json; charset=utf-8")
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                self._send_bytes(400, b'{"error":"invalid Content-Length"}', "application/json; charset=utf-8")
+                return
+            if length < 0 or length > 16 * 1024:
+                self._send_bytes(413, b'{"error":"request body too large"}', "application/json; charset=utf-8")
+                return
+            payload = self.rfile.read(length) if length else b""
+            if operation == "authorize" and payload:
+                self._send_bytes(400, b'{"error":"authorize does not accept a request body"}', "application/json; charset=utf-8")
+                return
+            if operation == "reject":
+                try:
+                    body_obj = json.loads(payload or b"{}")
+                except json.JSONDecodeError:
+                    self._send_bytes(400, b'{"error":"request body must be JSON"}', "application/json; charset=utf-8")
+                    return
+                if not isinstance(body_obj, dict) or not isinstance(body_obj.get("reason"), str) or not body_obj["reason"].strip():
+                    self._send_bytes(400, b'{"error":"reject requires a non-empty reason"}', "application/json; charset=utf-8")
+                    return
+                payload = json.dumps({"reason": body_obj["reason"]}).encode("utf-8")
+            try:
+                status, body = submit_response_action(manager_url, manager_token, response_id, operation, payload)
+            except (ManagerProxyError, ValueError) as exc:
                 body = json.dumps({"error": f"could not reach Manager: {exc}"}).encode("utf-8")
                 self._send_bytes(502, body, "application/json; charset=utf-8")
                 return
@@ -227,8 +302,8 @@ def main(argv: list[str] | None = None) -> int:
         "--manager-url",
         default=None,
         help="Optional Manager base URL (e.g. https://manager.internal). When set together with "
-        "the PANOPTICON_MANAGER_TOKEN environment variable, enables the read-only response-actions "
-        "panel -- this server calls Manager server-side; the browser never sees the token.",
+        "the PANOPTICON_MANAGER_TOKEN environment variable, enables response-action decisions "
+        "through same-origin Console routes; the browser never sees the token.",
     )
     args = parser.parse_args(argv)
 
