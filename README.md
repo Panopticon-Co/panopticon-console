@@ -233,6 +233,12 @@ Taken with Playwright against `tests/fake_manager.py`:
 [incident detail](docs/screenshots/incident-detail.png),
 [response actions](docs/screenshots/response-actions.png).
 
+Taken against the **real** Manager (branch `claude/blissful-lamport-qk32ab`,
+seeded with `tools/demo_seed.py`): [overview](docs/screenshots/live-overview.png),
+[incidents](docs/screenshots/live-incidents.png), and
+[a KILL_PROCESS the analyst approved, after the agent reported its result](docs/screenshots/live-response-succeeded.png)
+(the "agent" in that run is curl).
+
 ## The full V1 demonstration
 
 See [`docs/PANOPTICON_V1.md`](docs/PANOPTICON_V1.md) for the end-to-end
