@@ -25,9 +25,10 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Check dashboard and themes
+      - name: Check client script and run Node tests
         run: |
           node --check static/app.js
-          node tests/test_dashboard.cjs
-          node tests/test_theme.cjs
-          node tests/test_response_panel.cjs
+          for test in tests/*.cjs; do
+            echo "== $test"
+            node "$test"
+          done
