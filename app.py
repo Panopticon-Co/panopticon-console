@@ -421,7 +421,7 @@ def make_handler(
                 if raw_query:
                     try:
                         query = urllib.parse.parse_qs(raw_query, strict_parsing=True)
-                        allowed = {"state", "host_id", "alert_id", "limit", "offset"}
+                        allowed = {"state", "command_state", "host_id", "alert_id", "limit", "offset"}
                         if set(query) - allowed or any(len(v) != 1 for v in query.values()):
                             raise ValueError("invalid response queue filters")
                         if any(len(v[0]) > 128 for v in query.values()):
@@ -436,6 +436,22 @@ def make_handler(
                 return
             if route == "/api/response-actions/catalog" and not raw_query:
                 self._proxy_get("/api/v1/response-actions/catalog")
+                return
+            if route == "/api/analysts/me" and not raw_query:
+                self._proxy_get("/api/v1/analysts/me")
+                return
+            export_match = re.fullmatch(r"/api/response-actions/([A-Za-z0-9._:-]{1,128})/export", route)
+            if export_match is not None and not raw_query:
+                if not self._require_manager():
+                    return
+                try:
+                    status, body = manager_get(manager_url, manager_token,
+                        "/api/v1/response-actions/" + export_match.group(1) + "/export")
+                except ManagerProxyError as exc:
+                    self._send_json_error(502, f"could not reach Manager: {exc}")
+                    return
+                extra = {"Content-Disposition": 'attachment; filename="response-evidence.json"'} if status == 200 else None
+                self._send_bytes(status, body, JSON_TYPE, extra)
                 return
             if route == "/api/status":
                 self._proxy_get("/api/v1/status")
@@ -530,7 +546,7 @@ def make_handler(
                 return
             try:
                 record = json.loads(payload)
-                if not isinstance(record, dict) or set(record) - {"alert_id", "action", "reason", "target"}:
+                if not isinstance(record, dict) or set(record) - {"alert_id", "action", "reason", "target", "request_id"}:
                     raise ValueError("invalid response request fields")
             except (ValueError, UnicodeDecodeError):
                 self._send_json_error(400, "request must be a response action JSON object")

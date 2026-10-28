@@ -242,9 +242,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const { text, node, commandSummary, commandStateOf, targetSummary, auditList } = PanopticonRender;
   let lastPayload = null;
   let offset = 0, nextOffset = null, catalog = [];
-  let queueFilters = {state: "", host: ""};
+  let analyst = null, retryRequest = null;
+  let queueFilters = {state: "", host: "", command: ""};
+  const can = permission => !!analyst && Array.isArray(analyst.permissions) && analyst.permissions.includes(permission);
   function decisionCell(action) {
     const cell = node("td");
+    if (!can("response:decide")) return cell;
     if (commandStateOf(action) === "AUTHORIZED") {
       const cancel = node("button", "Cancel queued command"); cancel.type = "button";
       cancel.addEventListener("click", () => decide(action, "cancel", cancel));
@@ -254,6 +257,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const approve = node("button", "Approve");
     const reject = node("button", "Reject");
     approve.type = reject.type = "button";
+    const selfApproval = analyst.separate_approver_required && action.requested_by === "analyst:" + analyst.analyst_id;
+    approve.disabled = selfApproval;
+    if (selfApproval) approve.title = "A different analyst must approve this request.";
     approve.addEventListener("click", () => decide(action, "authorize", approve));
     reject.addEventListener("click", () => decide(action, "reject", reject));
     cell.append(approve, reject);
@@ -262,10 +268,20 @@ document.addEventListener("DOMContentLoaded", () => {
   function auditCell(action) {
     const cell = node("td");
     const entries = Array.isArray(action.audit) ? action.audit : [];
-    if (!entries.length) { cell.append(node("span", "No audit events", "subline")); return cell; }
-    const details = node("details"), summary = node("summary", `${entries.length} audit event${entries.length === 1 ? "" : "s"}`);
-    details.append(summary, auditList(entries));
-    cell.append(details);
+    if (!entries.length) cell.append(node("span", "No audit events", "subline"));
+    else {
+      const details = node("details"), summary = node("summary", `${entries.length} audit event${entries.length === 1 ? "" : "s"}`);
+      details.append(summary, auditList(entries)); cell.append(details);
+    }
+    if (Array.isArray(action.decision_audit) && action.decision_audit.length) {
+      const details = node("details");
+      details.append(node("summary", action.decision_audit.length + " decision events"), auditList(action.decision_audit));
+      cell.append(details);
+    }
+    if (action.evidence_truncated) cell.append(node("p", "History preview is limited. Export the complete case."));
+    const download = node("a", "Export case JSON", "subline");
+    download.href = "/api/response-actions/" + encodeURIComponent(action.response_id) + "/export";
+    download.download = "response-evidence.json"; cell.append(download);
     return cell;
   }
   function rowFor(action) {
@@ -294,6 +310,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return row;
   }
   async function decide(action, operation, button) {
+    if (!can("response:decide")) return;
     if (button) button.disabled = true;
     if (operation === "authorize") {
       const destructive = ["KILL_PROCESS", "ISOLATE_HOST", "QUARANTINE_FILE", "RELEASE_HOST_ISOLATION"].includes(action.action);
@@ -330,6 +347,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const filters = [];
       if (queueFilters.state) filters.push("state=" + encodeURIComponent(queueFilters.state));
       if (queueFilters.host) filters.push("host_id=" + encodeURIComponent(queueFilters.host));
+      if (queueFilters.command) filters.push("command_state=" + encodeURIComponent(queueFilters.command));
       if (offset) filters.push("offset=" + offset);
       const response = await fetch("/api/response-actions" + (filters.length ? "?" + filters.join("&") : ""), { cache: "no-store", signal: controller.signal });
       const payload = await response.json().catch(() => ({}));
@@ -346,7 +364,7 @@ document.addEventListener("DOMContentLoaded", () => {
       $("response-next").disabled = nextOffset === null; $("response-prev").disabled = offset === 0;
       // Re-render only when the queue changed, so an expanded audit trail or a
       // button mid-decision is not wiped by the 3-second poll.
-      const serialized = JSON.stringify(actions);
+      const serialized = JSON.stringify([analyst, actions]);
       if (serialized !== lastPayload) {
         const fragment = document.createDocumentFragment();
         for (const action of actions) fragment.append(rowFor(action));
@@ -372,7 +390,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (typeof $("response-action").focus === "function") $("response-action").focus();
   });
   $("response-apply").addEventListener("click", () => {
-    queueFilters = {state: $("response-filter-state").value, host: $("response-filter-host").value.trim()};
+    queueFilters = {state: $("response-filter-state").value, host: $("response-filter-host").value.trim(), command: $("response-filter-command").value};
     offset = 0; return pollResponseActions();
   });
   $("response-next").addEventListener("click", () => {if (nextOffset !== null) {offset = nextOffset; return pollResponseActions();}});
@@ -387,28 +405,46 @@ document.addEventListener("DOMContentLoaded", () => {
   $("response-create-form").addEventListener("submit", async event => {
     event.preventDefault(); const button = $("response-create"); button.disabled = true;
     try {
+      if (!can("response:request")) throw new Error("Your analyst role cannot request responses.");
       const item = catalog.find(a => a.action === $("response-action").value);
       if (!item) throw new Error("Select an action.");
       const request = {alert_id: $("response-alert").value.trim(), action: item.action, reason: $("response-reason").value.trim(), target: item.target_kind === "file" ? {path: $("response-file").value} : {}};
       if (!request.alert_id || !request.reason) throw new Error("Alert ID and reason are required.");
+      const intent = JSON.stringify(request);
+      if (!retryRequest || retryRequest.intent !== intent) retryRequest = {intent, id: globalThis.crypto?.randomUUID?.() || "ui-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2)};
+      request.request_id = retryRequest.id;
       const response = await fetch("/api/response-actions", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(request)});
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(text(result.detail || result.error || "Manager returned HTTP " + response.status));
-      $("response-create-status").textContent = "Staged for approval · " + result.response_id;
+      $("response-create-status").textContent = (result.replayed ? "Original request recovered · " : "Staged for approval · ") + result.response_id;
+      retryRequest = null;
       offset = 0; await pollResponseActions();
     } catch (error) {$("response-create-status").textContent = "Request failed: " + error.message;}
-    finally {button.disabled = !catalog.length;}
+    finally {button.disabled = !catalog.length || !can("response:request");}
   });
   async function loadCatalog() {
     try {
       const response = await fetch("/api/response-actions/catalog", {cache: "no-store"});
       const payload = await response.json();
       if (!response.ok || !Array.isArray(payload.actions)) throw new Error("Action catalog unavailable; check Manager connection.");
+      analyst = payload.analyst || null;
+      for (const id of ["incident-set-investigating", "incident-set-resolved", "incident-set-false_positive"]) {
+        const control = $(id); if (control) control.disabled = !can("incident:write");
+      }
+      if (respondFromAlert) respondFromAlert.disabled = !can("response:request");
+      $("response-identity").textContent = analyst ? "Signed in as " + analyst.analyst_id + " · " + analyst.role + (analyst.separate_approver_required ? " · independent approval required" : "") : "Analyst permissions unavailable — update the Manager connection.";
       catalog = payload.actions; $("response-action").replaceChildren();
       for (const item of catalog) {const option = node("option", item.label); option.value = item.action; $("response-action").append(option);}
       if (catalog.length) $("response-action").value = catalog.some(a => a.action === "COLLECT_NETWORK_CONNECTIONS") ? "COLLECT_NETWORK_CONNECTIONS" : catalog[0].action;
-      $("response-create").disabled = !catalog.length; updateActionHelp();
-    } catch (error) {$("response-create-status").textContent = error.message;}
+      $("response-create").disabled = !catalog.length || !can("response:request");
+      if (!can("response:request")) $("response-create-status").textContent = "Your role permits viewing or reviewing responses; request creation is unavailable.";
+      updateActionHelp(); lastPayload = null; await pollResponseActions();
+    } catch (error) {
+      analyst = null;
+      $("response-create").disabled = true;
+      $("response-create-status").textContent = error.message;
+      $("response-identity").textContent = "Analyst permissions unavailable";
+    }
   }
   loadCatalog();
   pollResponseActions();

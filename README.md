@@ -96,6 +96,26 @@ in a response to the browser.
 
 ### Analyst response workspace
 
+The governance release adds explicit analyst identity/role, permissions, command
+outcome filters, decision history and complete case export. Manager enforces
+permissions independently of browser controls. Viewers inspect/export;
+responders stage requests; approvers decide; existing analysts retain both.
+When a deployment requires separate approval, self-approval is disabled and a
+different analyst must approve the request.
+
+Failed manual submissions retain a request ID while the form intent is unchanged,
+so retrying recovers the original request. Changing the form creates a different
+intent. This retry identity is kept in the current page only; it is not persisted
+across reloads. Exact process targets remain derived server-side.
+
+Each row has **Export case JSON**, including original alert context, exact command,
+decision/command audit, results and retained execution receipts. Large polling
+histories show a limited-preview notice; export retrieves all retained events.
+The Console credential remains server-side. Read-only views remain available to
+all enrolled roles; tenant/host scopes and multi-user browser sessions require
+separate deployment integration. See
+[Manager governance](https://github.com/Panopticon-Co/panopticon-manager/blob/main/docs/RESPONSE_GOVERNANCE.md).
+
 Requires Manager's response-operations release (migration 19). Open an alert and
 choose **Respond to this alert**, or expand **Request a response action**. Select
 one of the seven supported command types, enter a reason, and supply an exact
