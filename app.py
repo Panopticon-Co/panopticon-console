@@ -440,17 +440,20 @@ def make_handler(
             if route == "/api/analysts/me" and not raw_query:
                 self._proxy_get("/api/v1/analysts/me")
                 return
-            export_match = re.fullmatch(r"/api/response-actions/([A-Za-z0-9._:-]{1,128})/export", route)
+            if route == "/api/response-campaigns" and not raw_query:
+                self._proxy_get("/api/v1/response-campaigns")
+                return
+            export_match = re.fullmatch(r"/api/response-actions/([A-Za-z0-9._:-]{1,128})/(export|preflight)", route)
             if export_match is not None and not raw_query:
                 if not self._require_manager():
                     return
                 try:
                     status, body = manager_get(manager_url, manager_token,
-                        "/api/v1/response-actions/" + export_match.group(1) + "/export")
+                        "/api/v1/response-actions/" + export_match.group(1) + "/" + export_match.group(2))
                 except ManagerProxyError as exc:
                     self._send_json_error(502, f"could not reach Manager: {exc}")
                     return
-                extra = {"Content-Disposition": 'attachment; filename="response-evidence.json"'} if status == 200 else None
+                extra = {"Content-Disposition": 'attachment; filename="response-evidence.json"'} if status == 200 and export_match.group(2) == "export" else None
                 self._send_bytes(status, body, JSON_TYPE, extra)
                 return
             if route == "/api/status":
@@ -528,6 +531,9 @@ def make_handler(
             if self.path == "/api/response-actions":
                 self._handle_manual_response()
                 return
+            if self.path == "/api/response-campaigns":
+                self._handle_campaign()
+                return
             match = re.fullmatch(r"/api/response-actions/([^/]+)/(authorize|reject|cancel)", self.path)
             if match is not None:
                 self._handle_response_action_decision(match.group(1), match.group(2))
@@ -554,6 +560,29 @@ def make_handler(
             try:
                 status, body = manager_post(manager_url, manager_token,
                                             "/api/v1/response-actions", payload)
+            except ManagerProxyError as exc:
+                self._send_json_error(502, f"could not reach Manager: {exc}")
+                return
+            self._send_bytes(status, body, JSON_TYPE)
+
+        def _handle_campaign(self) -> None:
+            if not self._require_manager():
+                return
+            payload = self._read_body()
+            if payload is None:
+                return
+            try:
+                record = json.loads(payload)
+                if not isinstance(record, dict) or set(record) != {"campaign_id", "items"}:
+                    raise ValueError("invalid campaign fields")
+                if not isinstance(record["items"], list) or not 1 <= len(record["items"]) <= 25:
+                    raise ValueError("campaign must contain 1 to 25 requests")
+            except (ValueError, UnicodeDecodeError) as exc:
+                self._send_json_error(400, str(exc))
+                return
+            try:
+                status, body = manager_post(manager_url, manager_token,
+                                            "/api/v1/response-campaigns", payload)
             except ManagerProxyError as exc:
                 self._send_json_error(502, f"could not reach Manager: {exc}")
                 return

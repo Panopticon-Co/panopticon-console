@@ -96,6 +96,25 @@ in a response to the browser.
 
 ### Analyst response workspace
 
+The flagship implementation adds **Review readiness** on each response. It shows
+retained target/enrollment checks, current approval eligibility, signing authority
+and observed response-channel contact. Native support and enforcement mode stay
+explicitly unknown until endpoints report them. Readiness review is advisory;
+Manager and the endpoint still enforce the actual action checks.
+
+The catalog shows public command-authority readiness and key ID. Approval obtains
+a fresh preflight before presenting its confirmation when the connected Manager
+supports it. A blocked preflight sends no authorization request.
+
+**Stage a response campaign** accepts up to 25 distinct alert IDs, one action and
+reason, and a common endpoint path for file actions. Every accepted item stays
+pending for individual approval. Partial refusals are shown per alert. Unchanged
+submissions retain their campaign identity for safe replay; **Start a new campaign**
+explicitly starts a different staging intent. Historical reports describe staging,
+and the queue shows current execution state. Unsupported older Managers keep
+campaign controls disabled. These features do not execute E2E tests or native
+endpoint operations by themselves.
+
 The governance release adds explicit analyst identity/role, permissions, command
 outcome filters, decision history and complete case export. Manager enforces
 permissions independently of browser controls. Viewers inspect/export;
