@@ -522,7 +522,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const control = $(id); if (control) control.disabled = !can("incident:write");
       }
       if (respondFromAlert) respondFromAlert.disabled = !can("response:request");
-      $("response-identity").textContent = analyst ? "Signed in as " + analyst.analyst_id + " · " + analyst.role + (analyst.separate_approver_required ? " · independent approval required" : "") : "Analyst permissions unavailable — update the Manager connection.";
+      $("response-identity").textContent = analyst ? "Console identity: " + analyst.analyst_id + " · " + analyst.role + (analyst.separate_approver_required ? " · independent approval required" : "") : "Analyst permissions unavailable — update the Manager connection.";
       catalog = payload.actions; $("response-action").replaceChildren();
       for (const item of catalog) {const option = node("option", item.label); option.value = item.action; $("response-action").append(option);}
       $("response-campaign-action").replaceChildren();
