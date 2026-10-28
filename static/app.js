@@ -196,6 +196,8 @@ const PanopticonRender = (() => {
     if (target.host_id != null) parts.push("host " + target.host_id);
     const pid = target.target_pid ?? target.pid; if (pid != null) parts.push("pid " + pid);
     const file = target.target_file ?? target.file ?? target.path; if (file != null) parts.push("file " + file);
+    if (target.start_time_ticks != null) parts.push("creation ticks " + target.start_time_ticks);
+    if (target.boot_id != null) parts.push("boot " + target.boot_id);
     return parts.join(" · ");
   }
   function commandSummary(action) {
@@ -208,6 +210,8 @@ const PanopticonRender = (() => {
       case "FAILED": return `Agent reported FAILED for ${verb} · command ${id}`;
       case "REJECTED": return `Agent rejected ${verb} · command ${id}`;
       case "EXPIRED": return `Command ${id} (${verb}) expired · no outcome`;
+      case "CANCELLED": return `Command ${id} (${verb}) cancelled before dispatch`;
+      case "INDETERMINATE": return `Agent reported an uncertain outcome for ${verb} · review execution evidence · command ${id}`;
       default: return `Command ${id} (${verb}) is ${state} · no outcome reported yet`;
     }
   }
@@ -237,8 +241,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const $ = (id) => document.getElementById(id);
   const { text, node, commandSummary, commandStateOf, targetSummary, auditList } = PanopticonRender;
   let lastPayload = null;
+  let offset = 0, nextOffset = null, catalog = [];
+  let queueFilters = {state: "", host: ""};
   function decisionCell(action) {
     const cell = node("td");
+    if (commandStateOf(action) === "AUTHORIZED") {
+      const cancel = node("button", "Cancel queued command"); cancel.type = "button";
+      cancel.addEventListener("click", () => decide(action, "cancel", cancel));
+      cell.append(cancel); return cell;
+    }
     if (action.lifecycle_state !== "PENDING") return cell;
     const approve = node("button", "Approve");
     const reject = node("button", "Reject");
@@ -260,8 +271,24 @@ document.addEventListener("DOMContentLoaded", () => {
   function rowFor(action) {
     const row = node("tr"), actionCell = node("td");
     actionCell.append(node("span", action.action));
+    if (action.host_id || action.agent_id) actionCell.append(node("span", [action.host_id, action.agent_id].filter(Boolean).join(" · "), "subline"));
     const target = targetSummary(action.target); if (target) actionCell.append(node("span", target, "subline"));
+    if (action.requested_by) actionCell.append(node("span", "Requested by " + action.requested_by + " · " + action.request_reason, "subline"));
     const commandCell = node("td", commandSummary(action), "command-state");
+    if ((action.results || []).length || (action.receipts || []).length) {
+      const details = node("details"); details.append(node("summary", "Execution evidence"));
+      for (const result of action.results || []) details.append(node("p", result.outcome + " · " + text(result.detail) + " · received " + text(result.received_at)));
+      for (const receipt of action.receipts || []) {
+        const payload = receipt.payload || {};
+        details.append(node("p", "Retained receipt " + text(payload.result_id) + " · " + text(payload.outcome) + " · " + text(payload.detail)));
+        if (payload.execution) {
+          const e = payload.execution;
+          details.append(node("p", `Stage: ${e.stage} · action initiated: ${e.action_initiated} · completion observed: ${e.completion_observed} · native error: ${text(e.native_error)}`));
+        }
+      }
+      details.append(node("p", "Retained receipts may arrive after expiry or a terminal outcome. They do not change the command state."));
+      commandCell.append(details);
+    }
     const state = commandStateOf(action); if (state) commandCell.className += " cmd-" + String(state).toLowerCase();
     row.append(node("td", action.lifecycle_state), actionCell, node("td", action.tier), node("td", action.alert_id), node("td", action.created_at), node("td", action.decided_reason), commandCell, auditCell(action), decisionCell(action));
     return row;
@@ -269,7 +296,7 @@ document.addEventListener("DOMContentLoaded", () => {
   async function decide(action, operation, button) {
     if (button) button.disabled = true;
     if (operation === "authorize") {
-      const destructive = ["KILL_PROCESS", "ISOLATE_HOST"].includes(action.action);
+      const destructive = ["KILL_PROCESS", "ISOLATE_HOST", "QUARANTINE_FILE", "RELEASE_HOST_ISOLATION"].includes(action.action);
       if (destructive) {
         const expected = "APPROVE " + action.action + " " + action.alert_id;
         const typed = typeof globalThis.prompt === "function" ? globalThis.prompt("Type exactly: " + expected) : null;
@@ -279,8 +306,8 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
     let body;
-    if (operation === "reject") {
-      const reason = typeof globalThis.prompt === "function" ? globalThis.prompt("Reason for rejection:", "Analyst rejected after review") : null;
+    if (operation === "reject" || operation === "cancel") {
+      const reason = typeof globalThis.prompt === "function" ? globalThis.prompt("Reason for " + operation + ":", "Analyst reviewed") : null;
       if (!reason || !reason.trim()) { if (button) button.disabled = false; return; }
       body = JSON.stringify({reason: reason.trim()});
     }
@@ -288,7 +315,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const response = await fetch("/api/response-actions/" + encodeURIComponent(action.response_id) + "/" + operation, {
         method: "POST", headers: {"Content-Type": "application/json"}, body, cache: "no-store"
       });
-      if (!response.ok) throw new Error("Manager returned HTTP " + response.status);
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.authorized === false) throw new Error(text(result.reason || result.detail || result.error || "Manager returned HTTP " + response.status));
       $("response-status").textContent = "Decision recorded · refreshing…";
       await pollResponseActions();
     } catch (error) {
@@ -299,7 +327,11 @@ document.addEventListener("DOMContentLoaded", () => {
   async function pollResponseActions() {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8000);
     try {
-      const response = await fetch("/api/response-actions", { cache: "no-store", signal: controller.signal });
+      const filters = [];
+      if (queueFilters.state) filters.push("state=" + encodeURIComponent(queueFilters.state));
+      if (queueFilters.host) filters.push("host_id=" + encodeURIComponent(queueFilters.host));
+      if (offset) filters.push("offset=" + offset);
+      const response = await fetch("/api/response-actions" + (filters.length ? "?" + filters.join("&") : ""), { cache: "no-store", signal: controller.signal });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         lastPayload = null;
@@ -310,6 +342,8 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       const actions = Array.isArray(payload.response_actions) ? payload.response_actions : [];
+      nextOffset = payload.next_offset ?? null;
+      $("response-next").disabled = nextOffset === null; $("response-prev").disabled = offset === 0;
       // Re-render only when the queue changed, so an expanded audit trail or a
       // button mid-decision is not wiped by the 3-second poll.
       const serialized = JSON.stringify(actions);
@@ -329,6 +363,54 @@ document.addEventListener("DOMContentLoaded", () => {
     } finally { clearTimeout(timeout); }
   }
   $("response-refresh").addEventListener("click", pollResponseActions);
+  const respondFromAlert = $("detail-respond");
+  if (respondFromAlert) respondFromAlert.addEventListener("click", () => {
+    $("response-alert").value = $("detail-id").textContent;
+    if (typeof $("detail").close === "function") $("detail").close();
+    $("response-request").open = true;
+    if (typeof $("response").scrollIntoView === "function") $("response").scrollIntoView({behavior: "smooth"});
+    if (typeof $("response-action").focus === "function") $("response-action").focus();
+  });
+  $("response-apply").addEventListener("click", () => {
+    queueFilters = {state: $("response-filter-state").value, host: $("response-filter-host").value.trim()};
+    offset = 0; return pollResponseActions();
+  });
+  $("response-next").addEventListener("click", () => {if (nextOffset !== null) {offset = nextOffset; return pollResponseActions();}});
+  $("response-prev").addEventListener("click", () => {offset = Math.max(0, offset - 200); return pollResponseActions();});
+  function updateActionHelp() {
+    const item = catalog.find(a => a.action === $("response-action").value);
+    $("response-file-label").hidden = !item || item.target_kind !== "file";
+    $("response-file").required = !!item && item.target_kind === "file";
+    $("response-action-help").textContent = item ? item.description + " All manual requests await explicit approval." + (item.target_kind === "process" ? " The target is derived from the alert's retained process identity." : "") : "Choose an available action.";
+  }
+  $("response-action").addEventListener("change", updateActionHelp);
+  $("response-create-form").addEventListener("submit", async event => {
+    event.preventDefault(); const button = $("response-create"); button.disabled = true;
+    try {
+      const item = catalog.find(a => a.action === $("response-action").value);
+      if (!item) throw new Error("Select an action.");
+      const request = {alert_id: $("response-alert").value.trim(), action: item.action, reason: $("response-reason").value.trim(), target: item.target_kind === "file" ? {path: $("response-file").value} : {}};
+      if (!request.alert_id || !request.reason) throw new Error("Alert ID and reason are required.");
+      const response = await fetch("/api/response-actions", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(request)});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(text(result.detail || result.error || "Manager returned HTTP " + response.status));
+      $("response-create-status").textContent = "Staged for approval · " + result.response_id;
+      offset = 0; await pollResponseActions();
+    } catch (error) {$("response-create-status").textContent = "Request failed: " + error.message;}
+    finally {button.disabled = !catalog.length;}
+  });
+  async function loadCatalog() {
+    try {
+      const response = await fetch("/api/response-actions/catalog", {cache: "no-store"});
+      const payload = await response.json();
+      if (!response.ok || !Array.isArray(payload.actions)) throw new Error("Action catalog unavailable; check Manager connection.");
+      catalog = payload.actions; $("response-action").replaceChildren();
+      for (const item of catalog) {const option = node("option", item.label); option.value = item.action; $("response-action").append(option);}
+      if (catalog.length) $("response-action").value = catalog.some(a => a.action === "COLLECT_NETWORK_CONNECTIONS") ? "COLLECT_NETWORK_CONNECTIONS" : catalog[0].action;
+      $("response-create").disabled = !catalog.length; updateActionHelp();
+    } catch (error) {$("response-create-status").textContent = error.message;}
+  }
+  loadCatalog();
   pollResponseActions();
   setInterval(pollResponseActions, 3000);
 });

@@ -94,6 +94,37 @@ in a response to the browser.
 
 ## Views
 
+### Analyst response workspace
+
+Requires Manager's response-operations release (migration 19). Open an alert and
+choose **Respond to this alert**, or expand **Request a response action**. Select
+one of the seven supported command types, enter a reason, and supply an exact
+endpoint path for file actions. Process identities come from retained alert
+evidence; the browser never rounds Windows creation ticks or invents a PID.
+Every manual request stages for explicit approval, including collection requests.
+
+Filter by recommendation state and exact host ID, or page through history.
+Authorized commands show a **Cancel queued command** control until dispatch;
+Manager atomically refuses cancellation once delivery may have begun. Disruptive
+approvals require typing the action and alert identity. Rejection and cancellation
+require reasons. Requests and decisions use the configured analyst's identity.
+
+The command column shows outcome and expandable execution evidence. An
+INDETERMINATE result is labeled uncertain; native initiated/completed facts and
+errors remain visible. Late receipts are shown separately and never imply that
+an expired/cancelled command changed state or succeeded. Native action support
+and execution safety are enforced by the endpoint.
+
+New same-origin routes: `GET /api/response-actions/catalog`,
+`POST /api/response-actions` and `POST /api/response-actions/{id}/cancel`.
+Queue query keys `state`, `host_id`, `alert_id`, `limit`, `offset` are allowed;
+Manager validates their values. Credentials stay server-side; cross-origin POST
+decisions with a mismatched Origin header are refused.
+
+Use [Manager's E2E acceptance runbook](https://github.com/Panopticon-Co/panopticon-manager/blob/main/docs/RESPONSE_OPERATIONS.md)
+for enrolled disposable Windows/Linux endpoint verification. Panel/API tests use
+simulated receipts and do not establish native endpoint execution.
+
 All panels poll every 3 seconds. Open dialogs are refreshed in place only when
 their data changed, and polling never clears a note being typed.
 
