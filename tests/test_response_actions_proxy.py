@@ -153,6 +153,20 @@ class ResponseActionsProxyTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 403)
         caught.exception.close()
 
+    def test_identity_case_export_and_request_id_stay_server_side(self):
+        port = self._build(manager_url="http://manager.test", manager_token=SECRET_TOKEN)
+        for path in ("/api/analysts/me", "/api/response-actions/r1/export"):
+            with unittest.mock.patch("app.manager_get", return_value=(200, b'{"safe":true}')) as mocked:
+                status, body = self._get(port, path)
+            self.assertEqual(status, 200)
+            self.assertNotIn(SECRET_TOKEN.encode(), body)
+            mocked.assert_called_once_with("http://manager.test", SECRET_TOKEN,
+                                           path.replace("/api/", "/api/v1/", 1))
+        request = b'{"alert_id":"a1","action":"ISOLATE_HOST","reason":"Review","request_id":"retry-1"}'
+        with unittest.mock.patch("app.manager_post", return_value=(201, b'{}')) as mocked:
+            self.assertEqual(self._request(port, "/api/response-actions", "POST", request)[0], 201)
+        self.assertEqual(mocked.call_args.args[-1], request)
+
 
 if __name__ == "__main__":
     unittest.main()

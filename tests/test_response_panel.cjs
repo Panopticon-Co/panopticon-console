@@ -10,7 +10,7 @@ let status = 200, payload = { response_actions: [] }, offline = false;
 const context = vm.createContext({
   document: { addEventListener:(event,fn)=>fn(), getElementById: el, createElement: () => new Element(), createDocumentFragment: () => Object.assign(new Element(), { fragment: true }) },
   AbortController, setTimeout, clearTimeout, setInterval: () => {},
-  fetch: async () => { if (offline) throw Error('offline'); return { ok: status < 400, status, json: async () => payload }; }
+  fetch: async (url) => { if (url.endsWith("/catalog")) return {ok:true,status:200,json:async()=>({actions:[],analyst:{analyst_id:"alice",role:"analyst",permissions:["response:request","response:decide"]}})}; if (offline) throw Error('offline'); return { ok: status < 400, status, json: async () => payload }; }
 });
 // Only the RESPONSE ACTIONS PANEL section is executed here -- it registers
 // its own, separate DOMContentLoaded handler and does not depend on the

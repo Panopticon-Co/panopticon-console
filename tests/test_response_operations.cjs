@@ -19,7 +19,7 @@ const context = vm.createContext({
   fetch:async (url, options={})=> {
     requests.push({url, options});
     let status=200, payload=queue;
-    if (url.endsWith('/catalog')) payload={actions:catalog};
+    if (url.endsWith('/catalog')) payload={actions:catalog,analyst:{analyst_id:"alice",role:"analyst",permissions:["response:request","response:decide"]}};
     else if (options.method==='POST') {
       payload=failCreate ? {detail:'an equivalent response is already pending or in flight'} : {response_id:'manual-1'};
       status=failCreate ? 409 : 201;
@@ -35,7 +35,8 @@ vm.runInContext(fs.readFileSync('static/app.js','utf8').split('// RESPONSE ACTIO
   el('response-alert').value='alert-1'; el('response-reason').value='Collect evidence'; el('response-file').value='/tmp/evidence';
   await el('response-create-form').listeners.submit({preventDefault(){}});
   const created=requests.find(r=>r.url==='/api/response-actions' && r.options.method==='POST');
-  assert.deepEqual(JSON.parse(created.options.body),{alert_id:'alert-1',action:'COLLECT_FILE',reason:'Collect evidence',target:{path:'/tmp/evidence'}});
+  const request=JSON.parse(created.options.body); assert.ok(request.request_id); delete request.request_id;
+  assert.deepEqual(request,{alert_id:'alert-1',action:'COLLECT_FILE',reason:'Collect evidence',target:{path:'/tmp/evidence'}});
   assert.match(el('response-create-status').textContent,/Staged for approval/);
   failCreate=true;
   await el('response-create-form').listeners.submit({preventDefault(){}});
