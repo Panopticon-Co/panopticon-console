@@ -262,6 +262,15 @@ document.addEventListener("DOMContentLoaded", () => {
       details.append(node("summary", "Readiness review"));
       const readiness = payload.readiness || {};
       details.append(node("p", "Endpoint: " + text(payload.host_id) + " · last response contact: " + text(readiness.contact_state) + " · execution mode: " + text(readiness.execution_mode)));
+      const report = readiness.sensor_report;
+      if (report) {
+        details.append(node("p", "Linux sensor report · captured " + text(report.captured_at) + " · received " + text(report.received_at) + " · freshness: " + text(report.freshness)));
+        const providers = node("ul");
+        for (const provider of report.response_providers || []) {
+          providers.append(node("li", text(provider.name) + " · " + text(provider.state) + " · " + text(provider.reason) + " · reported policy capabilities: " + (provider.capabilities || []).join(", ")));
+        }
+        details.append(providers, node("p", "Reported capabilities describe the retained snapshot. Current enforcement mode and action support still require endpoint verification."));
+      }
       details.append(node("p", "Target: " + (targetSummary(payload.target) || "host-wide action")));
       const checks = node("ul");
       for (const check of payload.checks || []) checks.append(node("li", check.state + " · " + check.detail));
@@ -320,7 +329,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const target = targetSummary(action.target); if (target) actionCell.append(node("span", target, "subline"));
     if (action.requested_by) actionCell.append(node("span", "Requested by " + action.requested_by + " · " + action.request_reason, "subline"));
     const commandCell = node("td", commandSummary(action), "command-state");
-    if ((action.results || []).length || (action.receipts || []).length) {
+    if ((action.results || []).length || (action.receipts || []).length || (action.endpoint_evidence || []).length) {
       const details = node("details"); details.append(node("summary", "Execution evidence"));
       for (const result of action.results || []) details.append(node("p", result.outcome + " · " + text(result.detail) + " · received " + text(result.received_at)));
       for (const receipt of action.receipts || []) {
@@ -331,6 +340,19 @@ document.addEventListener("DOMContentLoaded", () => {
           details.append(node("p", `Stage: ${e.stage} · action initiated: ${e.action_initiated} · completion observed: ${e.completion_observed} · native error: ${text(e.native_error)}`));
         }
       }
+      for (const item of action.endpoint_evidence || []) {
+        const report = item.reported || {}, section = node("details");
+        section.append(node("summary", (report.dry_run ? "DRY RUN · " : "Endpoint report · ") + text(report.action) + " · " + text(report.outcome)));
+        section.append(node("p", "Command linkage: " + text(item.linkage) + ((item.mismatches || []).length ? " · disagreements: " + item.mismatches.join(", ") : "")));
+        section.append(node("p", "Captured " + text(item.captured_at) + " · received " + text(item.received_at) + " · record " + text(item.record_id)));
+        if (report.dry_run) section.append(node("p", "Dry run: this report does not establish that a containment action occurred."));
+        section.append(node("p", "Sensor fields · executed: " + text(report.executed) + " · native method: " + text(report.mode) + " · affected: " + text(report.affected)));
+        section.append(node("p", "Reported target: " + (targetSummary(report.target || {}) || text(report.path) || "host-wide action")));
+        section.append(node("p", "Reason: " + text(report.reason) + " · " + text(report.detail)));
+        section.append(node("p", "Retained record SHA-256: " + text(item.sha256)));
+        details.append(section);
+      }
+      details.append(node("p", "Endpoint telemetry is retained separately from command receipts. A report with mismatched identity is evidence to investigate; it does not establish command completion."));
       details.append(node("p", "Retained receipts may arrive after expiry or a terminal outcome. They do not change the command state."));
       commandCell.append(details);
     }

@@ -389,3 +389,13 @@ is a local development/demo viewer, not a multi-user production console.
 - [`panopticon-agent`](https://github.com/Panopticon-Co/panopticon-agent) / [`panopticon-linux-agent`](https://github.com/Panopticon-Co/panopticon-linux-agent) — upstream telemetry producers, not integrated directly with this console.
 - [`panopticon-contracts`](https://github.com/Panopticon-Co/panopticon-contracts) — canonical wire contracts used elsewhere in the pipeline.
 - [Panopticon-Co](https://github.com/Panopticon-Co) — organization home.
+
+
+### Linux response evidence
+
+Response cases show retained native execution reports, exact command linkage
+checks, capture/receive times, dry-run status, native method and original-record
+SHA-256. Mismatches remain visible for investigation and never establish command
+completion. Full case JSON export includes the original records when Manager
+supports this feature. Readiness shows reported Linux policy capabilities as
+an advisory snapshot with unverified freshness; current mode remains unknown.
