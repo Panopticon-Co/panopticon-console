@@ -27,7 +27,7 @@ async function harness(role,permissions){
   assert.equal(h.el('incident-set-resolved').disabled,true);
   const audit=h.el('response-body').children[0].children[7];
   assert.ok(audit.children.some(el=>el.textContent==='History preview is limited. Export the complete case.'));
-  assert.equal(audit.children.at(-1).href,'/api/response-actions/r1/export');
+  assert.equal(audit.children.find(child=>child.href).href,'/api/response-actions/r1/export');
   assert.equal(audit.children[1].children[0].textContent,'1 decision events');
   h.el('response-alert').value='alert-1'; h.el('response-reason').value='review';
   await h.el('response-create-form').listeners.submit({preventDefault(){}});

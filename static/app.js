@@ -243,8 +243,33 @@ document.addEventListener("DOMContentLoaded", () => {
   let lastPayload = null;
   let offset = 0, nextOffset = null, catalog = [];
   let analyst = null, retryRequest = null;
+  let maxCampaignActions = 0, campaignRetry = null, preflightEnabled = false;
   let queueFilters = {state: "", host: "", command: ""};
   const can = permission => !!analyst && Array.isArray(analyst.permissions) && analyst.permissions.includes(permission);
+  async function fetchPreflight(action) {
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch("/api/response-actions/" + encodeURIComponent(action.response_id) + "/preflight", {cache: "no-store", signal: controller.signal});
+      const payload = await response.json();
+      if (!response.ok) throw new Error(text(payload.detail || payload.error || "Readiness review unavailable"));
+      return payload;
+    } finally {clearTimeout(timer);}
+  }
+  async function reviewReadiness(action, button, container) {
+    button.disabled = true;
+    try {
+      const payload = await fetchPreflight(action), details = node("details"); details.open = true;
+      details.append(node("summary", "Readiness review"));
+      const readiness = payload.readiness || {};
+      details.append(node("p", "Endpoint: " + text(payload.host_id) + " · last response contact: " + text(readiness.contact_state) + " · execution mode: " + text(readiness.execution_mode)));
+      details.append(node("p", "Target: " + (targetSummary(payload.target) || "host-wide action")));
+      const checks = node("ul");
+      for (const check of payload.checks || []) checks.append(node("li", check.state + " · " + check.detail));
+      details.append(checks, node("p", "This is an advisory review. Manager rechecks authorization; the endpoint enforces native safety."));
+      container.replaceChildren(details);
+    } catch (error) {container.replaceChildren(node("p", "Review failed: " + error.message));}
+    finally {button.disabled = !preflightEnabled;}
+  }
   function decisionCell(action) {
     const cell = node("td");
     if (!can("response:decide")) return cell;
@@ -282,6 +307,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const download = node("a", "Export case JSON", "subline");
     download.href = "/api/response-actions/" + encodeURIComponent(action.response_id) + "/export";
     download.download = "response-evidence.json"; cell.append(download);
+    const review = node("button", "Review readiness"), preview = node("div");
+    review.type = "button"; review.disabled = !preflightEnabled;
+    review.addEventListener("click", () => reviewReadiness(action, review, preview));
+    cell.append(review, preview);
     return cell;
   }
   function rowFor(action) {
@@ -313,6 +342,15 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!can("response:decide")) return;
     if (button) button.disabled = true;
     if (operation === "authorize") {
+      if (preflightEnabled) {
+        try {
+          const preview = await fetchPreflight(action);
+          if (!preview.allowed_to_authorize) throw new Error((preview.checks || []).filter(c => c.state === "block").map(c => c.detail).join(" ") || "Authorization is blocked.");
+        } catch (error) {
+          $("response-status").textContent = "Approval blocked: " + error.message;
+          if (button) button.disabled = false; return;
+        }
+      }
       const destructive = ["KILL_PROCESS", "ISOLATE_HOST", "QUARANTINE_FILE", "RELEASE_HOST_ISOLATION"].includes(action.action);
       if (destructive) {
         const expected = "APPROVE " + action.action + " " + action.alert_id;
@@ -404,6 +442,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("response-action").addEventListener("change", updateActionHelp);
   $("response-create-form").addEventListener("submit", async event => {
     event.preventDefault(); const button = $("response-create"); button.disabled = true;
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
     try {
       if (!can("response:request")) throw new Error("Your analyst role cannot request responses.");
       const item = catalog.find(a => a.action === $("response-action").value);
@@ -413,14 +452,59 @@ document.addEventListener("DOMContentLoaded", () => {
       const intent = JSON.stringify(request);
       if (!retryRequest || retryRequest.intent !== intent) retryRequest = {intent, id: globalThis.crypto?.randomUUID?.() || "ui-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2)};
       request.request_id = retryRequest.id;
-      const response = await fetch("/api/response-actions", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(request)});
+      const response = await fetch("/api/response-actions", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(request), signal: controller.signal});
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(text(result.detail || result.error || "Manager returned HTTP " + response.status));
       $("response-create-status").textContent = (result.replayed ? "Original request recovered · " : "Staged for approval · ") + result.response_id;
       retryRequest = null;
       offset = 0; await pollResponseActions();
     } catch (error) {$("response-create-status").textContent = "Request failed: " + error.message;}
-    finally {button.disabled = !catalog.length || !can("response:request");}
+    finally {clearTimeout(timer); button.disabled = !catalog.length || !can("response:request");}
+  });
+  function updateCampaignHelp() {
+    const item = catalog.find(a => a.action === $("response-campaign-action").value);
+    $("response-campaign-file-label").hidden = !item || item.target_kind !== "file";
+    $("response-campaign-file").required = !!item && item.target_kind === "file";
+  }
+  function campaignReport(report) {
+    const item = node("li");
+    item.append(node("strong", `${report.campaign_id} · ${report.created_count} staged · ${report.failed_count} refused${report.replayed ? " · recovered report" : ""}`));
+    const list = node("ol");
+    for (const entry of report.items || []) list.append(node("li", entry.alert_id + " · " + entry.action + " · " + (entry.response_id ? "Staged request: " + entry.response_id + " (current state is in the queue)" : text(entry.error))));
+    item.append(list); return item;
+  }
+  async function loadCampaigns() {
+    if (!maxCampaignActions) return;
+    try {
+      const response = await fetch("/api/response-campaigns", {cache: "no-store"});
+      const payload = await response.json();
+      if (!response.ok) throw new Error(text(payload.detail || payload.error || "Campaign reports unavailable"));
+      $("response-campaign-reports").replaceChildren(...(payload.campaigns || []).map(campaignReport));
+    } catch (error) {$("response-campaign-status").textContent = error.message;}
+  }
+  $("response-campaign-action").addEventListener("change", updateCampaignHelp);
+  $("response-campaign-new").addEventListener("click", () => {campaignRetry = null; $("response-campaign-status").textContent = "A new campaign will be staged on the next submission.";});
+  $("response-campaign-form").addEventListener("submit", async event => {
+    event.preventDefault(); const button = $("response-campaign-create"); button.disabled = true;
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      if (!can("response:request") || !maxCampaignActions) throw new Error("Your connection cannot stage campaigns.");
+      const alerts = $("response-campaign-alerts").value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (!alerts.length || alerts.length > maxCampaignActions) throw new Error("Enter 1 to " + maxCampaignActions + " alert IDs.");
+      if (new Set(alerts).size !== alerts.length) throw new Error("Duplicate alert IDs are not allowed.");
+      const item = catalog.find(a => a.action === $("response-campaign-action").value), reason = $("response-campaign-reason").value.trim();
+      if (!item || !reason) throw new Error("An action and reason are required.");
+      const items = alerts.map(alert_id => ({alert_id, action: item.action, reason, target: item.target_kind === "file" ? {path: $("response-campaign-file").value} : {}}));
+      const intent = JSON.stringify(items);
+      if (!campaignRetry || campaignRetry.intent !== intent) campaignRetry = {intent, id: globalThis.crypto?.randomUUID?.() || "campaign-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2)};
+      const response = await fetch("/api/response-campaigns", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({campaign_id: campaignRetry.id, items}), signal: controller.signal});
+      const report = await response.json();
+      if (!response.ok) throw new Error(text(report.detail || report.error || "Campaign staging failed"));
+      $("response-campaign-status").textContent = `${report.created_count} staged for individual approval · ${report.failed_count} refused${report.replayed ? " · original report recovered" : ""}`;
+      $("response-campaign-reports").replaceChildren(campaignReport(report));
+      offset = 0; await pollResponseActions();
+    } catch (error) {$("response-campaign-status").textContent = "Campaign failed: " + error.message;}
+    finally {clearTimeout(timer); button.disabled = !maxCampaignActions || !can("response:request");}
   });
   async function loadCatalog() {
     try {
@@ -428,20 +512,30 @@ document.addEventListener("DOMContentLoaded", () => {
       const payload = await response.json();
       if (!response.ok || !Array.isArray(payload.actions)) throw new Error("Action catalog unavailable; check Manager connection.");
       analyst = payload.analyst || null;
+      maxCampaignActions = Number.isInteger(payload.max_campaign_actions) ? Math.min(25, payload.max_campaign_actions) : 0;
+      preflightEnabled = payload.preflight_supported === true;
+      const authority = payload.command_authority;
+      $("response-authority").textContent = authority ? "Command signing: " + authority.state + (authority.key_id ? " · key " + authority.key_id : "") + ". Use readiness review for current endpoint details." : "Command signing readiness is not reported by this Manager.";
+      $("response-campaign-create").disabled = !maxCampaignActions || !can("response:request");
+      $("response-campaign-status").textContent = maxCampaignActions ? "Stage up to " + maxCampaignActions + " requests. Every action requires individual approval." : "Campaign staging requires the updated Manager.";
       for (const id of ["incident-set-investigating", "incident-set-resolved", "incident-set-false_positive"]) {
         const control = $(id); if (control) control.disabled = !can("incident:write");
       }
       if (respondFromAlert) respondFromAlert.disabled = !can("response:request");
-      $("response-identity").textContent = analyst ? "Signed in as " + analyst.analyst_id + " · " + analyst.role + (analyst.separate_approver_required ? " · independent approval required" : "") : "Analyst permissions unavailable — update the Manager connection.";
+      $("response-identity").textContent = analyst ? "Console identity: " + analyst.analyst_id + " · " + analyst.role + (analyst.separate_approver_required ? " · independent approval required" : "") : "Analyst permissions unavailable — update the Manager connection.";
       catalog = payload.actions; $("response-action").replaceChildren();
       for (const item of catalog) {const option = node("option", item.label); option.value = item.action; $("response-action").append(option);}
+      $("response-campaign-action").replaceChildren();
+      for (const item of catalog) {const option = node("option", item.label); option.value = item.action; $("response-campaign-action").append(option);}
       if (catalog.length) $("response-action").value = catalog.some(a => a.action === "COLLECT_NETWORK_CONNECTIONS") ? "COLLECT_NETWORK_CONNECTIONS" : catalog[0].action;
+      $("response-campaign-action").value = $("response-action").value; updateCampaignHelp();
       $("response-create").disabled = !catalog.length || !can("response:request");
       if (!can("response:request")) $("response-create-status").textContent = "Your role permits viewing or reviewing responses; request creation is unavailable.";
-      updateActionHelp(); lastPayload = null; await pollResponseActions();
+      updateActionHelp(); lastPayload = null; await pollResponseActions(); await loadCampaigns();
     } catch (error) {
       analyst = null;
       $("response-create").disabled = true;
+      $("response-campaign-create").disabled = true;
       $("response-create-status").textContent = error.message;
       $("response-identity").textContent = "Analyst permissions unavailable";
     }

@@ -167,6 +167,22 @@ class ResponseActionsProxyTests(unittest.TestCase):
             self.assertEqual(self._request(port, "/api/response-actions", "POST", request)[0], 201)
         self.assertEqual(mocked.call_args.args[-1], request)
 
+    def test_preflight_and_campaigns_proxy_fixed_routes(self):
+        port = self._build(manager_url="http://manager.test", manager_token=SECRET_TOKEN)
+        for path in ("/api/response-actions/r1/preflight", "/api/response-campaigns"):
+            with unittest.mock.patch("app.manager_get", return_value=(200, b'{}')) as mocked:
+                status, _ = self._get(port, path)
+            self.assertEqual(status, 200)
+            mocked.assert_called_once_with("http://manager.test", SECRET_TOKEN,
+                                           path.replace("/api/", "/api/v1/", 1))
+        request = json.dumps({"campaign_id": "case-1", "items": [{"alert_id": "a1",
+            "action": "ISOLATE_HOST", "reason": "Review"}]}).encode()
+        with unittest.mock.patch("app.manager_post", return_value=(201, b'{}')) as mocked:
+            self.assertEqual(self._request(port, "/api/response-campaigns", "POST", request)[0], 201)
+        self.assertEqual(mocked.call_args.args[-1], request)
+        self.assertEqual(self._request(port, "/api/response-campaigns", "POST",
+                         b'{"campaign_id":"bad","items":[]}')[0], 400)
+
 
 if __name__ == "__main__":
     unittest.main()
