@@ -157,6 +157,37 @@ input::placeholder { color: var(--muted); opacity: 1; }
 #response-table{font-size:13px}
 #response-table td,#response-table th{padding:11px 10px}
 #response-table td button{padding:4px 10px;margin:2px}
+.response-create{padding:16px 20px;border-bottom:1px solid var(--border)}
+.response-form{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+.response-form label,.response-filters label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}
+.response-form [hidden]{display:none}
+.response-form input,.response-form select,.response-form textarea,.response-filters input,.response-filters select{width:100%;box-sizing:border-box}
+.response-form p,.response-form label:has(textarea){grid-column:1/-1}
+.response-form textarea{min-height:70px;resize:vertical}
+.response-filters{display:flex;gap:12px;align-items:end;flex-wrap:wrap;padding:16px 20px}
+.response-filters input{min-width:160px}
+.cmd-indeterminate{color:var(--medium)}
+.cmd-cancelled{color:var(--muted)}
+#response-table .subline{overflow-wrap:anywhere;max-width:320px}
+@media(max-width:1000px){
+#response-table,#response-table tbody,#response-table tr,#response-table td{display:block;width:auto}
+#response-table thead{position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden}
+#response-table tr{margin:12px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+#response-table td{max-width:none;overflow-wrap:anywhere;border-bottom:0;padding:8px 12px}
+#response-table td:empty{display:none}
+#response-table td::before{display:block;font-size:10px;letter-spacing:.08em;color:var(--muted);margin-bottom:4px;text-transform:uppercase}
+#response-table td:nth-child(1)::before{content:"Recommendation state"}
+#response-table td:nth-child(2)::before{content:"Action and target"}
+#response-table td:nth-child(3)::before{content:"Approval policy"}
+#response-table td:nth-child(4)::before{content:"Originating alert"}
+#response-table td:nth-child(5)::before{content:"Requested at"}
+#response-table td:nth-child(6)::before{content:"Reason"}
+#response-table td:nth-child(7)::before{content:"Command outcome"}
+#response-table td:nth-child(8)::before{content:"Audit trail"}
+#response-table td:nth-child(9)::before{content:"Decision"}
+.response-form label{min-width:0}
+}
+@media(max-width:700px){.response-form{grid-template-columns:1fr}.response-filters{align-items:stretch}}
 #status-last-event{font-size:17px;line-height:1.3}
 .cmd-succeeded{color:var(--accent)}
 .cmd-failed,.cmd-rejected{color:var(--critical)}
@@ -191,8 +222,18 @@ textarea{font:inherit;color:inherit;background:var(--control);border:1px solid v
 <div class="table-wrap"><table id="alerts-table" hidden><thead><tr><th scope="col">Severity</th><th scope="col">Detection</th><th scope="col">Source</th><th scope="col">Process</th><th scope="col">Type</th><th scope="col">MITRE</th><th scope="col">Detected at</th></tr></thead><tbody id="alerts-body"></tbody></table></div><div id="empty" class="empty"><strong id="empty-title">Loading alerts…</strong><p id="empty-description">Connecting to your local alert feed.</p></div><div class="table-footer"><span id="result-count">Waiting for alerts</span><div class="pagination"><button id="previous" aria-label="Previous page" disabled>←</button><span id="page-label">Page 1 of 1</span><button id="next" aria-label="Next page" disabled>→</button></div></div></section><p class="footnote">Counts cover all loaded alerts. A detection is a signal to investigate, not proof of compromise.</p>
 <section class="panel" id="incidents" aria-labelledby="incidents-title"><div class="panel-head"><div><h2 id="incidents-title">Incidents</h2><p>Causally connected detections reconstructed by the provenance graph · select one to investigate</p></div><button id="incidents-refresh">Refresh</button></div><div class="table-wrap"><table id="incidents-table" hidden><thead><tr><th scope="col">Severity</th><th scope="col">Incident</th><th scope="col">Score</th><th scope="col">Tactics</th><th scope="col">Stages</th><th scope="col">Root process</th><th scope="col">Status</th><th scope="col">Last seen</th></tr></thead><tbody id="incidents-body"></tbody></table></div><div id="incidents-empty" class="empty"><strong id="incidents-empty-title">Incidents unavailable</strong><p id="incidents-empty-description">Start the console with --manager-url and PANOPTICON_MANAGER_TOKEN to see incidents.</p></div><div class="table-footer"><span id="incidents-status">Not connected</span></div></section>
 <p class="footnote">Incident scores are heuristic; their weights are not calibrated against real telemetry yet.</p>
-<section class="panel" id="response" aria-labelledby="response-title"><div class="panel-head"><div><h2 id="response-title">Response actions</h2><p>Analyst decisions are sent securely through the Manager.</p></div><button id="response-refresh">Refresh</button></div>
+<section class="panel" id="response" aria-labelledby="response-title"><div class="panel-head"><div><h2 id="response-title">Response actions</h2><p>Investigate, contain and review outcomes. Decisions are attributed to the configured analyst.</p></div><button id="response-refresh">Refresh</button></div>
+<details class="response-create" id="response-request"><summary>Request a response action</summary>
+<form id="response-create-form" class="response-form">
+<label for="response-alert">Originating alert ID<input id="response-alert" maxlength="128" required placeholder="Paste an alert ID from the investigation"></label>
+<label for="response-action">Action<select id="response-action" required><option value="">Loading available actions…</option></select></label>
+<p id="response-action-help" class="subline">All manual requests await explicit approval. Process targets come from the alert's verified identity.</p>
+<label for="response-file" id="response-file-label" hidden>Endpoint file path<input id="response-file" maxlength="4096" placeholder="Exact absolute path on the endpoint"></label>
+<label for="response-reason">Reason<textarea id="response-reason" maxlength="512" required placeholder="Explain the investigation or containment decision"></textarea></label>
+<button id="response-create" type="submit" disabled>Stage for approval</button><span id="response-create-status" role="status" aria-live="polite"></span>
+</form></details>
+<div class="response-filters"><label for="response-filter-state">Recommendation state<select id="response-filter-state"><option value="">All states</option><option>PENDING</option><option>AUTHORIZED</option><option>REJECTED</option><option>EXPIRED</option></select></label><label for="response-filter-host">Host<input id="response-filter-host" maxlength="128" placeholder="Exact host ID"></label><button id="response-apply" type="button">Apply filters</button><button id="response-prev" type="button" disabled>Previous</button><button id="response-next" type="button" disabled>Next</button></div>
 <div class="table-wrap"><table id="response-table" hidden><thead><tr><th scope="col">State</th><th scope="col">Action</th><th scope="col">Tier</th><th scope="col">Alert</th><th scope="col">Created</th><th scope="col">Reason</th><th scope="col">Command</th><th scope="col">Audit</th><th scope="col">Decision</th></tr></thead><tbody id="response-body"></tbody></table></div><div id="response-empty" class="empty"><strong id="response-empty-title">Response actions unavailable</strong><p id="response-empty-description">Start the console with --manager-url and the PANOPTICON_MANAGER_TOKEN environment variable to see this queue.</p></div><div class="table-footer"><span id="response-status">Not connected</span></div></section>
 <p class="footnote">Approve or reject pending response actions here; decisions are sent through the Console to Manager, which remains the authority.</p></main></div>
-<dialog id="detail" aria-labelledby="detail-title"><div class="panel-head"><span class="eyebrow">Alert investigation</span><button id="close-detail" aria-label="Close alert details">Close ×</button></div><h2 id="detail-title"></h2><span id="detail-severity" class="sev"></span> <span id="detail-source" class="src"></span> <span id="detail-incident"></span><p id="detail-description"></p><dl id="detail-meta" class="drawer-meta"></dl><h3>Matched conditions</h3><ul id="detail-conditions"></ul><h3>Evidence</h3><dl id="evidence"></dl><h3>Recommended response</h3><dl id="detail-response"></dl><h3>Alert identifier</h3><p id="detail-id"></p></dialog>
+<dialog id="detail" aria-labelledby="detail-title"><div class="panel-head"><span class="eyebrow">Alert investigation</span><button id="close-detail" aria-label="Close alert details">Close ×</button></div><h2 id="detail-title"></h2><span id="detail-severity" class="sev"></span> <span id="detail-source" class="src"></span> <span id="detail-incident"></span><p id="detail-description"></p><dl id="detail-meta" class="drawer-meta"></dl><h3>Matched conditions</h3><ul id="detail-conditions"></ul><h3>Evidence</h3><dl id="evidence"></dl><h3>Recommended response</h3><dl id="detail-response"></dl><h3>Alert identifier</h3><p id="detail-id"></p><button id="detail-respond" type="button">Respond to this alert</button></dialog>
 <dialog id="incident-detail" class="wide" aria-labelledby="incident-title"><div class="panel-head"><span class="eyebrow">Incident investigation</span><button id="close-incident" aria-label="Close incident details">Close ×</button></div><h2 id="incident-title"></h2><span id="incident-severity" class="sev"></span><p id="incident-chain" class="mono"></p><dl id="incident-meta" class="drawer-meta"></dl><h3>Analyst status</h3><div class="status-actions"><label for="incident-note">Note (optional)<textarea id="incident-note" maxlength="2000"></textarea></label><button id="incident-set-investigating" type="button">Investigating</button><button id="incident-set-resolved" type="button">Resolved</button><button id="incident-set-false_positive" type="button">False positive</button></div><p id="incident-message" role="status"></p><h3>Stage timeline</h3><div class="table-wrap"><table><thead><tr><th scope="col">Time</th><th scope="col">Rule</th><th scope="col">Tactic / technique</th><th scope="col">Process[pid]</th><th scope="col">Alert</th></tr></thead><tbody id="incident-stages"></tbody></table></div><p id="incident-stages-empty" hidden>No stages supplied.</p><h3>Process lineage</h3><div id="incident-lineage"></div><h3>Causal path</h3><ol id="incident-causal" class="causal"></ol><h3>Score breakdown</h3><div id="incident-score"></div><h3>Why this is an incident</h3><ul id="incident-why" class="why"></ul><h3>Member alerts</h3><ul id="incident-alerts" class="member-list"></ul><h3>Related response actions</h3><ul id="incident-responses" class="member-list"></ul><h3>Incident audit</h3><div id="incident-audit"></div></dialog></body></html>

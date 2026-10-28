@@ -118,6 +118,41 @@ class ResponseActionsProxyTests(unittest.TestCase):
         self.assertEqual(status, 503)
         self.assertNotIn(SECRET_TOKEN.encode(), body)
 
+    def test_catalog_and_filters_proxy_only_to_fixed_manager_routes(self):
+        port = self._build(manager_url="http://manager.test", manager_token=SECRET_TOKEN)
+        for suffix in ("/catalog", "?state=PENDING&host_id=host-1&limit=10&offset=0"):
+            with unittest.mock.patch("app.manager_get", return_value=(200, b'{}')) as mocked:
+                status, _ = self._get(port, "/api/response-actions" + suffix)
+            self.assertEqual(status, 200)
+            mocked.assert_called_once_with("http://manager.test", SECRET_TOKEN,
+                                           "/api/v1/response-actions" + suffix)
+        self.assertEqual(self._get(port, "/api/response-actions?url=http://evil.test")[0], 400)
+        self.assertEqual(self._get(port, "/api/response-actions?state=PENDING&state=REJECTED")[0], 400)
+
+    def test_manual_creation_and_cancel_preserve_manager_errors(self):
+        port = self._build(manager_url="http://manager.test", manager_token=SECRET_TOKEN)
+        request = b'{"alert_id":"a1","action":"ISOLATE_HOST","reason":"Incident review"}'
+        with unittest.mock.patch("app.manager_post", return_value=(409, b'{"detail":"duplicate"}')) as mocked:
+            status, body = self._request(port, "/api/response-actions", "POST", request)
+        self.assertEqual(status, 409)
+        self.assertIn(b"duplicate", body)
+        mocked.assert_called_once_with("http://manager.test", SECRET_TOKEN,
+                                       "/api/v1/response-actions", request)
+        with unittest.mock.patch("app.submit_response_action", return_value=(200, b'{}')) as mocked:
+            status, _ = self._request(port, "/api/response-actions/r1/cancel", "POST",
+                                      b'{"reason":"Cancel before dispatch"}')
+        self.assertEqual(status, 200)
+        self.assertEqual(mocked.call_args.args[3], "cancel")
+
+    def test_cross_origin_decisions_are_refused(self):
+        port = self._build(manager_url="http://manager.test", manager_token=SECRET_TOKEN)
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/response-actions/r1/authorize",
+                                     method="POST", headers={"Origin": "https://untrusted.test"})
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(caught.exception.code, 403)
+        caught.exception.close()
+
 
 if __name__ == "__main__":
     unittest.main()
