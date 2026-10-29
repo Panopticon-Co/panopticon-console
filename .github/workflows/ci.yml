@@ -25,7 +25,16 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Check out central signed artifact fixtures
+        uses: actions/checkout@v4
+        with:
+          repository: Panopticon-Co/panopticon-contracts
+          ref: "62e8a7a1e42e6ff02da929842cc07ed48b80cb72"
+          path: _artifact-contracts
+
       - name: Check client script and run Node tests
+        env:
+          PANOPTICON_CONTRACTS_DIR: _artifact-contracts
         run: |
           node --check static/app.js
           for test in tests/*.cjs; do
