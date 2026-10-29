@@ -330,6 +330,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const download = node("a", "Export case JSON", "subline");
     download.href = "/api/response-actions/" + encodeURIComponent(action.response_id) + "/export";
     download.download = "response-evidence.json"; cell.append(download);
+    const artifacts = node("button", "Investigation evidence"); artifacts.type = "button";
+    artifacts.addEventListener("click", () => window.PanopticonEvidence?.openCase(action.response_id));
+    cell.append(artifacts);
     const review = node("button", "Review readiness"), preview = node("div");
     review.type = "button"; review.disabled = !preflightEnabled;
     review.addEventListener("click", () => reviewReadiness(action, review, preview));

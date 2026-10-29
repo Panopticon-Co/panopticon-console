@@ -21,9 +21,11 @@ presents what they return and relays an analyst's explicit decisions (approve /
 reject a response action, set an incident's status). It never executes a
 response.
 
-Not in scope, by design: browser-facing authentication, a database, a message
-queue, WebSockets, TLS. The server binds ``127.0.0.1`` by default; it is a local
-development / demo tool.
+Evidence routes use a separate individual analyst session held in server memory.
+They never fall back to the configured shared token used by the existing response
+views. Public evidence access requires an explicitly configured HTTPS origin and
+TLS termination; loopback HTTP is supported for the lab. The server still binds
+``127.0.0.1`` by default. Database, message queue and WebSockets remain external.
 """
 from __future__ import annotations
 
@@ -38,6 +40,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from evidence_sessions import EvidenceSessions
+
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 # Static assets this console will serve, mapped to their content type. Only these
@@ -47,6 +51,9 @@ _STATIC_ROUTES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "application/javascript; charset=utf-8"),
+    "/artifact-verifier.js": ("artifact-verifier.js", "application/javascript; charset=utf-8"),
+    "/artifact-download.js": ("artifact-download.js", "application/javascript; charset=utf-8"),
+    "/evidence.js": ("evidence.js", "application/javascript; charset=utf-8"),
 }
 
 # Alert fields the UI relies on. Declared here so a test can pin the contract
@@ -327,10 +334,37 @@ def _error(message: str) -> bytes:
     return json.dumps({"error": message}).encode("utf-8")
 
 
+def shared_view_body(body: bytes) -> bytes:
+    """A scoped shared token still cannot expose evidence to an anonymous browser."""
+    changed = False
+
+    def redact(value):
+        nonlocal changed
+        if isinstance(value, dict):
+            result = {}
+            for key, item in value.items():
+                if key == "artifacts":
+                    result[key] = []
+                    changed = True
+                elif key == "artifact_access":
+                    result[key] = "individual_evidence_identity_required"
+                    changed = True
+                else:
+                    result[key] = redact(item)
+            return result
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        return value
+
+    redacted = redact(json.loads(body))
+    return json.dumps(redacted).encode() if changed else body
+
+
 def make_handler(
     alerts_file: Optional[Path], manager_url: str | None = None, manager_token: str | None = None
 ) -> type[BaseHTTPRequestHandler]:
     manager_configured = bool(manager_url and manager_token)
+    evidence_sessions = EvidenceSessions(manager_url, os.environ.get("PANOPTICON_CONSOLE_PUBLIC_ORIGIN"))
 
     class ConsoleHandler(BaseHTTPRequestHandler):
         server_version = "PanopticonConsole/1.0"
@@ -356,6 +390,12 @@ def make_handler(
         def _send_bytes(
             self, status: int, body: bytes, content_type: str, extra_headers: Optional[dict[str, str]] = None
         ) -> None:
+            if (status == 200 and content_type.startswith("application/json")
+                    and self.path.startswith("/api/") and not self.path.startswith("/api/evidence/")):
+                try:
+                    body = shared_view_body(body)
+                except (ValueError, RecursionError):
+                    status, body = 502, _error("Manager returned an invalid shared-view payload")
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
@@ -370,6 +410,15 @@ def make_handler(
             self._send_bytes(status, _error(message), JSON_TYPE)
 
         def _not_found(self) -> None:
+            if self.command == "POST":
+                # Deliver a reliable refusal even when an unknown route has a body.
+                self.connection.settimeout(5)
+                try:
+                    if self._read_body() is None:
+                        return
+                except TimeoutError:
+                    self._send_json_error(408, "request body timed out")
+                    return
             self._send_bytes(404, b"not found\n", "text/plain; charset=utf-8")
 
         def _require_manager(self) -> bool:
@@ -404,6 +453,8 @@ def make_handler(
         # -- routing ----------------------------------------------------------
         def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
             route, _, raw_query = self.path.partition("?")
+            if evidence_sessions.handle_get(self, route, raw_query):
+                return
             if route in _STATIC_ROUTES:
                 filename, content_type = _STATIC_ROUTES[route]
                 asset = STATIC_DIR / filename
@@ -523,6 +574,8 @@ def make_handler(
             self._send_bytes(status, body, JSON_TYPE)
 
         def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
+            if evidence_sessions.handle_post(self):
+                return
             origin = self.headers.get("Origin")
             if origin and origin not in {"http://" + self.headers.get("Host", ""),
                                          "https://" + self.headers.get("Host", "")}:
