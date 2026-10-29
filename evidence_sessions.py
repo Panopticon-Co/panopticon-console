@@ -182,6 +182,13 @@ class EvidenceSessions:
         if not handler.path.startswith("/api/evidence/"):
             return False
         try:
+            # Consume the bounded frame before an early refusal. Closing a Windows
+            # socket with unread POST bytes can reset it before the 403 reaches
+            # the browser. A deadline prevents a slow sender holding this worker.
+            handler.connection.settimeout(5)
+            body = handler._read_body()
+            if body is None:
+                return True
             origin = self.origin(handler, write=True)
             if handler.path == "/api/evidence/session/logout":
                 with self.lock:
@@ -193,9 +200,6 @@ class EvidenceSessions:
                 raise EvidenceError(404, "Evidence route unavailable")
             if handler.headers.get("Content-Type", "").split(";")[0] != "application/json":
                 raise EvidenceError(415, "Evidence sign-in requires application/json")
-            body = handler._read_body()
-            if body is None:
-                return True
             value = json.loads(body)
             if (not isinstance(value, dict) or set(value) != {"access_token"}
                     or not isinstance(value["access_token"], str)
@@ -221,4 +225,6 @@ class EvidenceSessions:
                                 "application/json", {"Set-Cookie": self.cookie(sid, origin)})
         except (ValueError, EvidenceError) as exc:
             handler._send_json_error(getattr(exc, "status", 400), str(exc))
+        except TimeoutError:
+            handler._send_json_error(408, "Evidence request body timed out")
         return True
