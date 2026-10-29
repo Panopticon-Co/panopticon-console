@@ -262,6 +262,20 @@ document.addEventListener("DOMContentLoaded", () => {
       details.append(node("summary", "Readiness review"));
       const readiness = payload.readiness || {};
       details.append(node("p", "Endpoint: " + text(payload.host_id) + " · last response contact: " + text(readiness.contact_state) + " · execution mode: " + text(readiness.execution_mode)));
+      const runtime = readiness.runtime_profile;
+      if (runtime) {
+        details.append(node("p", "Runtime policy: " + text(runtime.state) + " · received " + text(runtime.observed_at)));
+        if (runtime.report) {
+          const policy = runtime.report;
+          details.append(node("p", "Platform: " + text(policy.platform) + " · last reported mode: " + text(policy.mode)));
+          details.append(node("p", "Permitted actions: " + ((policy.allowed_actions || []).join(", ") || "none")));
+          details.append(node("p", "Implemented actions: " + ((policy.implemented_actions || []).join(", ") || "none")));
+          details.append(node("p", "Boot binding required: " + (policy.require_boot_binding ? "yes" : "no") + " · command signatures required: " + (policy.require_signature ? "yes" : "no")));
+          details.append(node("p", "Reported boot: " + text(policy.boot_id)));
+        }
+        if (runtime.state !== "recent") details.append(node("p", "Current endpoint policy is unknown. A stale or missing report does not establish action support."));
+        else details.append(node("p", "This is the endpoint's recently reported policy. Each native action still verifies its target and local safety requirements."));
+      }
       const report = readiness.sensor_report;
       if (report) {
         details.append(node("p", "Linux sensor report · captured " + text(report.captured_at) + " · received " + text(report.received_at) + " · freshness: " + text(report.freshness)));
@@ -329,6 +343,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const target = targetSummary(action.target); if (target) actionCell.append(node("span", target, "subline"));
     if (action.requested_by) actionCell.append(node("span", "Requested by " + action.requested_by + " · " + action.request_reason, "subline"));
     const commandCell = node("td", commandSummary(action), "command-state");
+    if (action.dispatch_blocker) commandCell.append(node("p", "Further delivery held by endpoint policy: " + text(action.dispatch_blocker)));
     if ((action.results || []).length || (action.receipts || []).length || (action.endpoint_evidence || []).length) {
       const details = node("details"); details.append(node("summary", "Execution evidence"));
       for (const result of action.results || []) details.append(node("p", result.outcome + " · " + text(result.detail) + " · received " + text(result.received_at)));
