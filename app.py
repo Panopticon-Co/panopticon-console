@@ -21,9 +21,11 @@ presents what they return and relays an analyst's explicit decisions (approve /
 reject a response action, set an incident's status). It never executes a
 response.
 
-Not in scope, by design: browser-facing authentication, a database, a message
-queue, WebSockets, TLS. The server binds ``127.0.0.1`` by default; it is a local
-development / demo tool.
+Evidence routes use a separate individual analyst session held in server memory.
+They never fall back to the configured shared token used by the existing response
+views. Public evidence access requires an explicitly configured HTTPS origin and
+TLS termination; loopback HTTP is supported for the lab. The server still binds
+``127.0.0.1`` by default. Database, message queue and WebSockets remain external.
 """
 from __future__ import annotations
 
@@ -37,6 +39,8 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+from evidence_sessions import EvidenceSessions
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -331,6 +335,7 @@ def make_handler(
     alerts_file: Optional[Path], manager_url: str | None = None, manager_token: str | None = None
 ) -> type[BaseHTTPRequestHandler]:
     manager_configured = bool(manager_url and manager_token)
+    evidence_sessions = EvidenceSessions(manager_url, os.environ.get("PANOPTICON_CONSOLE_PUBLIC_ORIGIN"))
 
     class ConsoleHandler(BaseHTTPRequestHandler):
         server_version = "PanopticonConsole/1.0"
@@ -404,6 +409,8 @@ def make_handler(
         # -- routing ----------------------------------------------------------
         def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
             route, _, raw_query = self.path.partition("?")
+            if evidence_sessions.handle_get(self, route, raw_query):
+                return
             if route in _STATIC_ROUTES:
                 filename, content_type = _STATIC_ROUTES[route]
                 asset = STATIC_DIR / filename
@@ -523,6 +530,8 @@ def make_handler(
             self._send_bytes(status, body, JSON_TYPE)
 
         def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
+            if evidence_sessions.handle_post(self):
+                return
             origin = self.headers.get("Origin")
             if origin and origin not in {"http://" + self.headers.get("Host", ""),
                                          "https://" + self.headers.get("Host", "")}:
