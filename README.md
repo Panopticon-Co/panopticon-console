@@ -399,3 +399,13 @@ SHA-256. Mismatches remain visible for investigation and never establish command
 completion. Full case JSON export includes the original records when Manager
 supports this feature. Readiness shows reported Linux policy capabilities as
 an advisory snapshot with unverified freshness; current mode remains unknown.
+
+
+### Current endpoint response policy
+
+Readiness review shows current Windows/Linux response mode, implemented and
+permitted actions, native boot and signature requirements when Manager receives
+an authenticated runtime profile. Stale or missing profiles remain explicit
+unknowns. Manager rechecks policy before authorization and delivery; the queue
+explains when further delivery is held by endpoint policy. No native execution
+success is inferred from a capability report.
