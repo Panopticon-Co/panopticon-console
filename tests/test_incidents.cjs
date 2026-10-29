@@ -41,7 +41,10 @@ const detail = () => ({
     ? [{ audit_id: 'ia1', event: 'opened', actor: 'system:detection', occurred_at: '2026-10-25T08:05:00Z' }]
     : [{ audit_id: 'ia1', event: 'opened', actor: 'system:detection', occurred_at: '2026-10-25T08:05:00Z' }, { audit_id: 'ia2', event: 'status_changed', actor: 'analyst:alice', from_status: 'open', to_status: incidentStatus, note: 'confirmed', occurred_at: '2026-10-25T08:10:00Z' }],
 });
-const STATUS = { events: { pending: 4, claimed: 1, done: 120, failed: 2 }, alerts: 9, incidents_open: 1, response_actions: { PENDING: 3, AUTHORIZED: 1 }, agents_enrolled: 2, last_event_at: '2026-10-25T08:05:00Z' };
+const STATUS = { events: { pending: 4, claimed: 1, done: 120, failed: 2 }, alerts: 9, incidents_open: 1, response_actions: { PENDING: 3, AUTHORIZED: 1 }, agents_enrolled: 2, last_event_at: '2026-10-25T08:05:00Z',
+  // The Windows agent's canonical records are a second queue; the tiles count both.
+  endpoint_records: { pending: 6, claimed: 0, done: 30, failed: 1 }, last_record_at: '2026-10-25T08:06:00Z',
+  detection_worker: { alive: true, fatal_error: null, heartbeat_age_seconds: 0.4, loop_errors: 0 } };
 
 let configured = true; const posts = [];
 const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
@@ -141,15 +144,16 @@ const settle = () => new Promise((r) => setImmediate(r));
   // -- status tiles -------------------------------------------------------
   assert.equal(el('pipeline-tiles').hidden, false);
   assert.equal(el('pipeline-unavailable').hidden, true);
-  assert.equal(el('status-events-pending').textContent, '4');
+  assert.equal(el('status-events-pending').textContent, '10');
   assert.equal(el('status-events-pending-sub').textContent, '1 claimed by the worker');
-  assert.equal(el('status-events-done').textContent, '120');
-  assert.equal(el('status-events-failed').textContent, '2');
+  assert.equal(el('status-events-done').textContent, '150');
+  assert.equal(el('status-events-failed').textContent, '3');
   assert.equal(el('status-incidents-open').textContent, '1');
   assert.equal(el('status-pending-approvals').textContent, '3');
   assert.notEqual(el('status-last-event').textContent, 'No events yet');
   assert.match(el('status-last-event-sub').textContent, /^2 agents enrolled · 9 alerts stored$/);
   assert.doesNotMatch(el('health-note').textContent, /Collector health is not reported/);
+  assert.match(el('health-note').textContent, /Detection worker running/);
 
   // -- not configured (file mode) ------------------------------------------
   configured = false;

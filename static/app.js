@@ -144,7 +144,7 @@ function showDetail(a) {
 }
 registry.openAlert = showDetail;
 function rowFor(a, isNew) {
-  const row = node("tr", undefined, isNew ? "new-row" : ""), sev = node("td"), detection = node("td"), source = node("td"); sev.append(badge(a)); const open = node("button", a.title || a.rule_id || "Untitled alert", "alert-link"); open.type = "button"; open.addEventListener("click", () => showDetail(a)); detection.append(open, node("span", text(a.rule_id), "subline")); if (a.incident_id) detection.append(incidentButton(a.incident_id)); source.append(sourceBadge(a)); row.append(sev, detection, source, node("td", text(evidenceOf(a)["process.name"]), "mono"), node("td", familyOf(a).replace("_", " "), "family"), node("td", text(a.mitre_technique), "mono"), node("td", timeOf(a.timestamp), "when")); return row;
+  const row = node("tr", undefined, isNew ? "new-row" : ""), sev = node("td"), detection = node("td"), source = node("td"); sev.append(badge(a)); const open = node("button", a.title || a.rule_id || "Untitled alert", "alert-link"); open.type = "button"; open.addEventListener("click", () => showDetail(a)); detection.append(open, node("span", text(a.rule_id), "subline")); if (a.incident_id) detection.append(incidentButton(a.incident_id)); source.append(sourceBadge(a)); row.append(sev, detection, source, node("td", text(a.host_id), "mono"), node("td", text(evidenceOf(a)["process.name"]), "mono"), node("td", familyOf(a).replace("_", " "), "family"), node("td", text(a.mitre_technique), "mono"), node("td", timeOf(a.timestamp), "when")); return row;
 }
 function render(flash = false) {
   $("count-total").textContent = alerts.length.toLocaleString(); for (const s of ["critical", "high", "medium", "low"]) $("count-" + s).textContent = alerts.filter((a) => severityOf(a) === s).length.toLocaleString();
@@ -829,16 +829,26 @@ document.addEventListener("DOMContentLoaded", () => {
   function count(v) { return Number.isFinite(v) ? v.toLocaleString() : "—"; }
   function setTile(id, value, sub) { $(id).textContent = value; if (sub !== undefined) $(id + "-sub").textContent = sub; }
   function render(status) {
-    const events = status.events && typeof status.events === "object" ? status.events : {};
+    // Legacy events and the Windows agent's canonical records are two queues
+    // feeding the same detection worker; the tiles count both.
+    const queues = [status.events, status.endpoint_records].filter((q) => q && typeof q === "object");
+    const events = {};
+    for (const key of ["pending", "claimed", "done", "failed"]) {
+      const values = queues.map((q) => q[key]).filter(Number.isFinite);
+      events[key] = values.length ? values.reduce((x, y) => x + y, 0) : undefined;
+    }
+    const lastSeen = [status.last_event_at, status.last_record_at].filter(Boolean).sort().pop();
+    const worker = status.detection_worker && typeof status.detection_worker === "object" ? status.detection_worker : null;
     const actions = status.response_actions && typeof status.response_actions === "object" ? status.response_actions : {};
     setTile("status-events-pending", count(events.pending), Number.isFinite(events.claimed) ? `${events.claimed.toLocaleString()} claimed by the worker` : "");
     setTile("status-events-done", count(events.done));
     setTile("status-events-failed", count(events.failed));
     setTile("status-incidents-open", count(status.incidents_open));
     setTile("status-pending-approvals", count(Number.isFinite(actions.PENDING) ? actions.PENDING : 0));
-    setTile("status-last-event", status.last_event_at ? timeOf(status.last_event_at) : "No events yet", Number.isFinite(status.agents_enrolled) ? `${status.agents_enrolled.toLocaleString()} agent${status.agents_enrolled === 1 ? "" : "s"} enrolled · ${count(status.alerts)} alerts stored` : "");
+    setTile("status-last-event", lastSeen ? timeOf(lastSeen) : "No events yet", Number.isFinite(status.agents_enrolled) ? `${status.agents_enrolled.toLocaleString()} agent${status.agents_enrolled === 1 ? "" : "s"} enrolled · ${count(status.alerts)} alerts stored` : "");
     $("pipeline-tiles").hidden = false; $("pipeline-unavailable").hidden = true;
-    $("health-note").textContent = "Pipeline status from Manager: event queue and incident counts. Not per-collector health.";
+    const workerNote = !worker ? "" : worker.alive ? " Detection worker running." : ` Detection worker NOT running: ${worker.fatal_error ? text(worker.fatal_error) : "no heartbeat"}.`;
+    $("health-note").textContent = "Pipeline status from Manager: event queue and incident counts. Not per-collector health." + workerNote;
   }
   async function pollStatus() {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8000);

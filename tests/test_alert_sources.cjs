@@ -39,8 +39,9 @@ vm.runInContext(fs.readFileSync('static/app.js', 'utf8').split('// DASHBOARD INI
   assert.equal(el('data-source').textContent, 'Alert source: Manager API (proxied by this console)');
   const rows = el('alerts-body').children;
   assert.equal(rows.length, 5);
-  // Columns: severity, detection, source, process, type, MITRE, time.
-  assert.equal(rows[0].children.length, 7);
+  // Columns: severity, detection, source, host, process, type, MITRE, time.
+  assert.equal(rows[0].children.length, 8);
+  assert.equal(rows.find((r) => r.children[3].textContent === 'WS-1') !== undefined, true);
   const badges = rows.map((r) => r.children[2].children[0]);
   assert.deepEqual(badges.map((b) => b.textContent), ['correlation', 'stateful', 'behavioral', 'rule', 'unknown']);
   assert.deepEqual(badges.map((b) => b.className), ['src src-correlation', 'src src-stateful', 'src src-behavioral', 'src src-rule', 'src src-unknown']);
