@@ -51,6 +51,9 @@ _STATIC_ROUTES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "application/javascript; charset=utf-8"),
+    "/artifact-verifier.js": ("artifact-verifier.js", "application/javascript; charset=utf-8"),
+    "/artifact-download.js": ("artifact-download.js", "application/javascript; charset=utf-8"),
+    "/evidence.js": ("evidence.js", "application/javascript; charset=utf-8"),
 }
 
 # Alert fields the UI relies on. Declared here so a test can pin the contract
@@ -331,6 +334,32 @@ def _error(message: str) -> bytes:
     return json.dumps({"error": message}).encode("utf-8")
 
 
+def shared_view_body(body: bytes) -> bytes:
+    """A scoped shared token still cannot expose evidence to an anonymous browser."""
+    changed = False
+
+    def redact(value):
+        nonlocal changed
+        if isinstance(value, dict):
+            result = {}
+            for key, item in value.items():
+                if key == "artifacts":
+                    result[key] = []
+                    changed = True
+                elif key == "artifact_access":
+                    result[key] = "individual_evidence_identity_required"
+                    changed = True
+                else:
+                    result[key] = redact(item)
+            return result
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        return value
+
+    redacted = redact(json.loads(body))
+    return json.dumps(redacted).encode() if changed else body
+
+
 def make_handler(
     alerts_file: Optional[Path], manager_url: str | None = None, manager_token: str | None = None
 ) -> type[BaseHTTPRequestHandler]:
@@ -361,6 +390,12 @@ def make_handler(
         def _send_bytes(
             self, status: int, body: bytes, content_type: str, extra_headers: Optional[dict[str, str]] = None
         ) -> None:
+            if (status == 200 and content_type.startswith("application/json")
+                    and self.path.startswith("/api/") and not self.path.startswith("/api/evidence/")):
+                try:
+                    body = shared_view_body(body)
+                except (ValueError, RecursionError):
+                    status, body = 502, _error("Manager returned an invalid shared-view payload")
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
@@ -375,6 +410,15 @@ def make_handler(
             self._send_bytes(status, _error(message), JSON_TYPE)
 
         def _not_found(self) -> None:
+            if self.command == "POST":
+                # Deliver a reliable refusal even when an unknown route has a body.
+                self.connection.settimeout(5)
+                try:
+                    if self._read_body() is None:
+                        return
+                except TimeoutError:
+                    self._send_json_error(408, "request body timed out")
+                    return
             self._send_bytes(404, b"not found\n", "text/plain; charset=utf-8")
 
         def _require_manager(self) -> bool:

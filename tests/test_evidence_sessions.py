@@ -27,12 +27,13 @@ class EvidenceSessionTests(unittest.TestCase):
         self.addCleanup(self.thread.join, 5)
         self.addCleanup(self.server.shutdown)
         self.calls = []
+        self.versions = {}
         self.revoked = set()
         self.mock = patch("evidence_sessions.exchange", side_effect=self.backend)
         self.mock.start()
         self.addCleanup(self.mock.stop)
 
-    def backend(self, url, token, path):
+    def backend(self, url, token, path, payload=None):
         self.calls.append((url, token, path))
         if token in self.revoked:
             return 401, b'{"detail":"revoked"}'
@@ -47,6 +48,8 @@ class EvidenceSessionTests(unittest.TestCase):
         combined = {"Origin": self.origin, "Content-Type": "application/json", **(headers or {})}
         if cookie:
             combined["Cookie"] = cookie
+            if cookie in self.versions:
+                combined["X-Panopticon-Evidence-Identity"] = self.versions[cookie]
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
             connection.request(method, path, body=json.dumps(value).encode() if value is not None else None,
@@ -60,7 +63,9 @@ class EvidenceSessionTests(unittest.TestCase):
         status, headers, body = self.request("/api/evidence/session", method="POST",
                                              value={"access_token": token}, cookie=cookie)
         self.assertEqual(status, 200, body)
-        return headers["Set-Cookie"].split(";")[0], headers, json.loads(body)
+        cookie = headers["Set-Cookie"].split(";")[0]
+        self.versions[cookie] = json.loads(body)["identity_version"]
+        return cookie, headers, json.loads(body)
 
     def test_two_browsers_use_their_own_credentials_and_cookie_contains_no_token(self):
         cookie_a, headers, identity = self.login()
@@ -81,6 +86,36 @@ class EvidenceSessionTests(unittest.TestCase):
         for cookie in (None, COOKIE + "=" + "a" * 43):
             self.assertEqual(self.request("/api/evidence/cases/r1", cookie=cookie)[0], 401)
         self.assertEqual(self.calls, [])
+
+    def test_shared_response_views_redact_artifacts_even_if_shared_token_has_scope(self):
+        payload = json.dumps({"response_actions": [{"response_id": "r1", "artifact_access": "granted",
+                               "artifacts": [{"artifact_id": "sensitive-artifact", "custody": ["private"]}]}]}).encode()
+        with patch("app.fetch_response_actions", return_value=(200, payload)), patch(
+                "app.manager_get", return_value=(200, payload)):
+            for path in ("/api/response-actions", "/api/response-actions/r1/export", "/api/incidents/i1"):
+                status, _, body = self.request(path)
+                self.assertEqual(status, 200)
+                row = json.loads(body)["response_actions"][0]
+                self.assertEqual(row["artifacts"], [])
+                self.assertEqual(row["artifact_access"], "individual_evidence_identity_required")
+                self.assertNotIn(b"sensitive-artifact", body)
+
+    def test_stale_identity_header_and_malformed_view_intent_are_refused(self):
+        cookie, _, _ = self.login()
+        self.versions[cookie] = "stale_identity_version"
+        self.assertEqual(self.request("/api/evidence/cases/r1", cookie=cookie)[0], 409)
+        self.versions[cookie] = self.request("/api/evidence/session", cookie=cookie)[2]
+        self.versions[cookie] = json.loads(self.versions[cookie])["identity_version"]
+        path = "/api/evidence/artifacts/art_" + "a" * 64 + "/view"
+        invalid = {"schema_version": "1", "request_id": "view-1", "manifest_sha256": "b" * 64,
+                   "operation": []}
+        calls = len(self.calls)
+        self.assertEqual(self.request(path, method="POST", value=invalid, cookie=cookie)[0], 400)
+        self.assertEqual(len(self.calls), calls)
+        valid = {**invalid, "operation": "view"}
+        self.assertEqual(self.request(path, method="POST", value=valid, cookie=cookie)[0], 200)
+        self.assertEqual(self.calls[-1][1], TOKEN_A)
+        self.assertTrue(self.calls[-1][2].endswith("/view"))
 
     def test_logout_and_credential_revocation_block_next_read(self):
         cookie, _, _ = self.login()

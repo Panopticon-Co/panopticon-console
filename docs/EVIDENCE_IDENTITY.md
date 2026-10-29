@@ -15,6 +15,12 @@ identity invalidates the old session. No evidence route falls back to the shared
 `PANOPTICON_MANAGER_TOKEN`. Manager rechecks the actual credential and case/endpoint
 scope on every request; a Console cookie cannot grant access.
 
+The session response also contains an opaque `identity_version`, distinct from
+the HttpOnly authentication cookie. Each case/artifact request must echo it in
+`X-Panopticon-Evidence-Identity`. Switching browser identity changes this version;
+a stale tab receives 409 instead of using the new credential implicitly. It is
+not a credential and cannot authorize a request without the actual session cookie.
+
 Loopback HTTP is supported for local development. Public access requires an
 explicit `PANOPTICON_CONSOLE_PUBLIC_ORIGIN=https://console.example` and HTTPS
 termination. Public cookies are Secure; Origin and Host must match that exact

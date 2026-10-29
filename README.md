@@ -29,10 +29,10 @@ The primary integration boundary is **the alert file on disk** for
 detection-engine: the console does not import it and makes no network call to
 it. Optionally, this server (not the browser) can also poll `panopticon-manager`
 over HTTP for a view of its response-action approval queue and analyst decisions — see
-"Response actions (optional)" below. No database, no message queue, no
-WebSockets, no browser-facing authentication — none of that is a V1
-requirement. It is a local development / demo tool and binds `127.0.0.1` by
-default.
+"Response actions (optional)" below. No database, message queue or WebSockets
+is required. Investigation evidence uses a separate
+individual browser identity with Manager-enforced case/endpoint grants; see
+[signed evidence](docs/SIGNED_EVIDENCE.md). It binds `127.0.0.1` by default.
 
 ## Requirements
 
@@ -258,10 +258,11 @@ the Console never executes response actions itself. The console's existing
   request paths cannot be turned into arbitrary file reads. Query parameters
   and path ids are whitelisted before any request to Manager is built, and
   POST bodies are bounded at 16 KB and re-serialised from validated fields.
-- Default bind is localhost. There is no browser-facing auth because there is
-  nothing multi-user about a local demo; do not add one to paper over
-  exposing it. The optional Manager analyst token is a server-side secret
-  (an environment variable), never a browser credential.
+- Default bind is localhost. Existing queue views use the configured server-side
+  Manager credential. Artifact metadata is redacted from these shared views,
+  including when that credential has a grant. Evidence uses individual HttpOnly
+  sessions and live Manager authorization; public evidence access requires an
+  explicit HTTPS origin. See [evidence identity](docs/EVIDENCE_IDENTITY.md).
 
 ## Test
 
@@ -371,9 +372,10 @@ TypeScript project.
 ## What this is not (yet)
 
 To be explicit about scope rather than implying more than exists: there is no
-browser-facing authentication, no database, and no WebSockets. The Console
-relays analyst decisions to Manager but never executes remediation itself. This
-is a local development/demo viewer, not a multi-user production console.
+general platform sign-in provider, database, or WebSockets. Individual evidence
+sessions do not retrofit the existing shared response controls with full platform
+IAM. The Console relays analyst decisions to Manager and never executes remediation
+itself. Public deployment still requires the documented HTTPS and access setup.
 
 ## Contributing / Security / License
 

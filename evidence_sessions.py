@@ -30,7 +30,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def exchange(manager_url, token, path):
+def exchange(manager_url, token, path, payload=None):
     """Bounded authenticated GET with redirects refused, even to another trusted host."""
     parsed = urllib.parse.urlsplit(manager_url)
     if (parsed.scheme != "https" and not
@@ -38,9 +38,11 @@ def exchange(manager_url, token, path):
         raise EvidenceError(503, "Evidence identity requires HTTPS Manager or a loopback lab Manager")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise EvidenceError(503, "Invalid evidence Manager address")
-    request = urllib.request.Request(manager_url.rstrip("/") + path,
+    request = urllib.request.Request(manager_url.rstrip("/") + path, data=payload,
+                                    method="POST" if payload is not None else "GET",
                                     headers={"Authorization": "Bearer " + token,
-                                             "Accept": "application/json"})
+                                             "Accept": "application/json",
+                                             "Content-Type": "application/json"})
     try:
         response = urllib.request.build_opener(NoRedirect()).open(request, timeout=5)
     except urllib.error.HTTPError as exc:
@@ -112,6 +114,9 @@ class EvidenceSessions:
             if entry is None or entry["expires"] <= time.monotonic():
                 self.sessions.pop(sid, None)
                 raise EvidenceError(401, "Sign in with your individual evidence identity")
+            if (handler.path != "/api/evidence/session" and
+                    handler.headers.get("X-Panopticon-Evidence-Identity") != entry["identity_version"]):
+                raise EvidenceError(409, "Evidence identity changed; refresh this browser view")
             return sid, entry.copy()
 
     def identity(self, token):
@@ -142,7 +147,8 @@ class EvidenceSessions:
             sid, entry = self.live(handler)
             if route == "/api/evidence/session" and not query:
                 identity = self.identity(entry["token"])
-                handler._send_bytes(200, json.dumps({"signed_in": True, **identity}).encode(),
+                handler._send_bytes(200, json.dumps({"signed_in": True, **identity,
+                                                    "identity_version": entry["identity_version"]}).encode(),
                                     "application/json")
                 return True
             path = None
@@ -192,6 +198,30 @@ class EvidenceSessions:
             if body is None:
                 return True
             origin = self.origin(handler, write=True)
+            match = re.fullmatch(r"/api/evidence/artifacts/(" + ARTIFACT + r")/view", handler.path)
+            if match:
+                sid, entry = self.live(handler)
+                value = json.loads(body)
+                if (not isinstance(value, dict) or set(value) != {
+                        "schema_version", "request_id", "manifest_sha256", "operation"}
+                        or value["schema_version"] != "1"
+                        or not isinstance(value["request_id"], str)
+                        or not re.fullmatch(ID, value["request_id"])
+                        or not isinstance(value["manifest_sha256"], str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", value["manifest_sha256"])
+                        or not isinstance(value["operation"], str)
+                        or value["operation"] not in {"view", "download"}):
+                    raise EvidenceError(400, "Invalid evidence view acknowledgement")
+                status, reply = exchange(self.manager_url, entry["token"],
+                                         "/api/v1/response-artifacts/" + match.group(1) + "/view",
+                                         json.dumps(value).encode())
+                with self.lock:
+                    if sid not in self.sessions or self.sessions[sid]["expires"] <= time.monotonic():
+                        raise EvidenceError(401, "Evidence session ended")
+                    if status == 401:
+                        self.sessions.pop(sid, None)
+                handler._send_bytes(status, reply, "application/json")
+                return True
             if handler.path == "/api/evidence/session/logout":
                 with self.lock:
                     self.sessions.pop(self.cookie_id(handler), None)
@@ -217,13 +247,17 @@ class EvidenceSessions:
                 current = self.sessions.get(old)
                 if current and hmac.compare_digest(current["token"], token):
                     sid = old
+                    identity_version = current["identity_version"]
                 else:
                     self.sessions.pop(old, None)
                     if len(self.sessions) >= MAX_SESSIONS:
                         raise EvidenceError(429, "Evidence session capacity reached")
                     sid = secrets.token_urlsafe(32)
-                self.sessions[sid] = {"token": token, "expires": now + TTL}
-            handler._send_bytes(200, json.dumps({"signed_in": True, **identity}).encode(),
+                    identity_version = secrets.token_urlsafe(16)
+                self.sessions[sid] = {"token": token, "expires": now + TTL,
+                                      "identity_version": identity_version}
+            handler._send_bytes(200, json.dumps({"signed_in": True, **identity,
+                                                "identity_version": identity_version}).encode(),
                                 "application/json", {"Set-Cookie": self.cookie(sid, origin)})
         except (ValueError, EvidenceError) as exc:
             handler._send_json_error(getattr(exc, "status", 400), str(exc))
