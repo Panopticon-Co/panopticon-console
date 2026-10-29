@@ -126,6 +126,8 @@ class EvidenceSessions:
                     or not 1 <= len(value["analyst_id"]) <= 128
                     or not isinstance(value.get("role"), str)
                     or not isinstance(value.get("permissions"), list)
+                    or type(value.get("access_policy_version")) is not int
+                    or value["access_policy_version"] != 2
                     or "artifact:read" not in value["permissions"]):
                 raise ValueError("not an artifact reader")
             return {"analyst_id": value["analyst_id"], "role": value["role"],

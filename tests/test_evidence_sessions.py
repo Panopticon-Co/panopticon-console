@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -38,6 +39,7 @@ class EvidenceSessionTests(unittest.TestCase):
         if path == "/api/v1/analysts/me":
             return 200, json.dumps({"analyst_id": "A" if token == TOKEN_A else "B",
                                     "role": "analyst", "permissions": ["artifact:read"],
+                                    "access_policy_version": 2,
                                     "access_token": "must_never_escape"}).encode()
         return 200, json.dumps({"artifact": "scoped", "caller": "A" if token == TOKEN_A else "B"}).encode()
 
@@ -131,6 +133,29 @@ class EvidenceSessionTests(unittest.TestCase):
         with self.assertRaises(EvidenceError) as error:
             exchange("http://manager.internal", TOKEN_A, "/api/v1/analysts/me")
         self.assertEqual(error.exception.status, 503)
+
+    def test_public_origin_uses_secure_cookie_and_ignores_forwarded_origin_claims(self):
+        with patch.dict(os.environ, {"PANOPTICON_CONSOLE_PUBLIC_ORIGIN": "https://console.test"}):
+            server = build_server(None, "127.0.0.1", 0, "https://manager.test", SHARED)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        previous_port = self.port
+        self.port = server.server_address[1]
+        try:
+            status, headers, _ = self.request(
+                "/api/evidence/session", method="POST", value={"access_token": TOKEN_A},
+                headers={"Host": "console.test", "Origin": "https://console.test"})
+            self.assertEqual(status, 200)
+            self.assertIn("; Secure", headers["Set-Cookie"])
+            self.assertEqual(self.request(
+                "/api/evidence/session", method="POST", value={"access_token": TOKEN_A},
+                headers={"Host": "console.test", "Origin": "http://console.test",
+                         "X-Forwarded-Proto": "https"})[0], 403)
+        finally:
+            self.port = previous_port
+            server.shutdown()
+            thread.join(5)
+            server.server_close()
 
     def test_real_transport_refuses_redirect_before_forwarding_the_credential(self):
         requests = []
