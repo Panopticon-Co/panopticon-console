@@ -91,7 +91,7 @@ document.addEventListener("DOMContentLoaded", () => {
 const POLL_INTERVAL_MS = 3000, PAGE_SIZE = 25, MANAGER_ALERT_LIMIT = 200;
 const $ = (id) => document.getElementById(id);
 const FAMILIES = ["process", "network", "file", "registry", "image_load"];
-const SOURCES = ["rule", "stateful", "behavioral", "correlation"];
+const SOURCES = ["rule", "stateful", "behavioral", "correlation", "ml"];
 const RESPONSE_FIELDS = ["action", "host_id", "target_pid", "target_guid", "target_start_time_ticks", "target_file", "reason"];
 let alerts = [], page = 1, lastPayload = null, busy = false, hasLoaded = false, alertSource = null;
 let seenIds = new Set();
@@ -124,6 +124,11 @@ function familyOf(a) { const tags = Array.isArray(a.tags) ? a.tags.map((t) => St
 function timeOf(v) { const d = new Date(v); return v && Number.isFinite(d.getTime()) ? d.toLocaleString() : text(v); }
 function badge(a) { return node("span", severityOf(a) + (Number.isFinite(a.level) ? ` · L${a.level}` : ""), "sev sev-" + severityOf(a)); }
 function sourceBadge(a) { return node("span", sourceOf(a), "src src-" + sourceOf(a)); }
+// The engine's optional ML stage: a score from a supervised model, shown as a
+// triage aid. An alert without an `ml` block was not scored -- never "benign".
+function mlOf(a) { return a.ml && typeof a.ml === "object" && !Array.isArray(a.ml) ? a.ml : null; }
+function mlScore(ml) { return Number.isFinite(ml.raw_score) ? ml.raw_score.toFixed(2) : text(ml.raw_score); }
+function mlChip(a) { const ml = mlOf(a); if (!ml || sourceOf(a) === "ml") return null; return node("span", "ML " + mlScore(ml) + (ml.band ? " · " + ml.band : " · below threshold"), "ml-chip" + (ml.band ? " ml-" + ml.band : "")); }
 function pair(parent, key, value) { const group = node("div"); group.append(node("dt", key), node("dd", text(value))); parent.append(group); }
 function incidentButton(id) { const link = node("button", "Incident " + text(id), "incident-link"); link.type = "button"; link.addEventListener("click", () => { if (typeof registry.openIncident === "function") registry.openIncident(String(id)); }); return link; }
 function showDetail(a) {
@@ -131,8 +136,14 @@ function showDetail(a) {
   $("detail-title").textContent = text(a.title || a.rule_id || "Untitled alert"); const sev = badge(a); $("detail-severity").textContent = sev.textContent; $("detail-severity").className = sev.className;
   const src = sourceBadge(a); $("detail-source").textContent = src.textContent; $("detail-source").className = src.className;
   $("detail-meta").replaceChildren();
-  for (const [key, value] of [["Rule", a.rule_id], ["Detected at", timeOf(a.timestamp)], ["Telemetry", familyOf(a).replace("_", " ")], ["MITRE technique", a.mitre_technique], ["MITRE tactic", a.mitre_tactic], ["Process", ev["process.name"]], ["Host", a.host_id], ["Agent", a.agent_id], ["rule confidence (prior, not calibrated)", Number.isFinite(a.confidence) ? a.confidence.toFixed(2) : a.confidence]]) pair($("detail-meta"), key, value);
+  for (const [key, value] of [["Rule", a.rule_id], ["Detected at", timeOf(a.timestamp)], ["Telemetry", familyOf(a).replace("_", " ")], ["MITRE technique", a.mitre_technique], ["MITRE tactic", a.mitre_tactic], ["Process", ev["process.name"]], ["Host", a.host_id], ["Agent", a.agent_id], [sourceOf(a) === "ml" ? "model marker (fixed, not a probability)" : "rule confidence (prior, not calibrated)", Number.isFinite(a.confidence) ? a.confidence.toFixed(2) : a.confidence]]) pair($("detail-meta"), key, value);
   $("detail-incident").replaceChildren(); if (a.incident_id) $("detail-incident").append(incidentButton(a.incident_id));
+  const ml = mlOf(a); $("detail-ml").replaceChildren(); $("detail-ml-title").hidden = $("detail-ml").hidden = !ml;
+  if (ml) {
+    const thresholds = ml.thresholds && typeof ml.thresholds === "object" ? ml.thresholds : {};
+    for (const [key, value] of [["Score (raw margin)", mlScore(ml)], ["Band", ml.band || "below threshold"], ["Thresholds", `alert ${text(thresholds.alert)} · high ${text(thresholds.high)}`], ["Mode", ml.mode], ["Model", ml.model_version], ["Artifact SHA-256", ml.artifact_sha256], ["Featurizer", ml.featurizer_version]]) pair($("detail-ml"), key, value);
+    $("detail-ml").append(node("p", "A triage aid from a supervised model with known limitations, not a verdict. It never changes a rule's level and never recommends a response.", "note"));
+  }
   if (a.description) $("detail-description").textContent = text(a.description); else $("detail-description").textContent = "";
   const conditions = Array.isArray(ev.matched_conditions) ? ev.matched_conditions : ev.matched_conditions == null ? [] : [ev.matched_conditions];
   $("detail-conditions").replaceChildren(); if (!conditions.length) $("detail-conditions").append(node("li", "No matched conditions were supplied.")); for (const c of conditions) $("detail-conditions").append(node("li", text(c), "mono"));
@@ -144,7 +155,7 @@ function showDetail(a) {
 }
 registry.openAlert = showDetail;
 function rowFor(a, isNew) {
-  const row = node("tr", undefined, isNew ? "new-row" : ""), sev = node("td"), detection = node("td"), source = node("td"); sev.append(badge(a)); const open = node("button", a.title || a.rule_id || "Untitled alert", "alert-link"); open.type = "button"; open.addEventListener("click", () => showDetail(a)); detection.append(open, node("span", text(a.rule_id), "subline")); if (a.incident_id) detection.append(incidentButton(a.incident_id)); source.append(sourceBadge(a)); row.append(sev, detection, source, node("td", text(a.host_id), "mono"), node("td", text(evidenceOf(a)["process.name"]), "mono"), node("td", familyOf(a).replace("_", " "), "family"), node("td", text(a.mitre_technique), "mono"), node("td", timeOf(a.timestamp), "when")); return row;
+  const row = node("tr", undefined, isNew ? "new-row" : ""), sev = node("td"), detection = node("td"), source = node("td"); sev.append(badge(a)); const open = node("button", a.title || a.rule_id || "Untitled alert", "alert-link"); open.type = "button"; open.addEventListener("click", () => showDetail(a)); detection.append(open, node("span", text(a.rule_id), "subline")); const chip = mlChip(a); if (chip) detection.append(chip); if (a.incident_id) detection.append(incidentButton(a.incident_id)); source.append(sourceBadge(a)); row.append(sev, detection, source, node("td", text(a.host_id), "mono"), node("td", text(evidenceOf(a)["process.name"]), "mono"), node("td", familyOf(a).replace("_", " "), "family"), node("td", text(a.mitre_technique), "mono"), node("td", timeOf(a.timestamp), "when")); return row;
 }
 function render(flash = false) {
   $("count-total").textContent = alerts.length.toLocaleString(); for (const s of ["critical", "high", "medium", "low"]) $("count-" + s).textContent = alerts.filter((a) => severityOf(a) === s).length.toLocaleString();
@@ -596,7 +607,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const $ = (id) => document.getElementById(id);
   const { text, node, timeOf, commandSummary, auditList } = PanopticonRender;
   const STATUSES = { investigating: "Investigating", resolved: "Resolved", false_positive: "False positive" };
-  const SOURCES = ["rule", "stateful", "behavioral", "correlation"];
+  const SOURCES = ["rule", "stateful", "behavioral", "correlation", "ml"];
   const registry = globalThis.PanopticonConsole || (globalThis.PanopticonConsole = {});
   let lastList = null, currentId = null, lastDetail = null, currentDetail = null, posting = false;
 

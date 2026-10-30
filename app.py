@@ -82,7 +82,7 @@ _ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 _CURSOR_RE = re.compile(r"[A-Za-z0-9:._+-]{1,64}")
 
 SEVERITIES = ("low", "medium", "high", "critical")
-DETECTION_SOURCES = ("rule", "stateful", "behavioral", "correlation")
+DETECTION_SOURCES = ("rule", "stateful", "behavioral", "correlation", "ml")
 INCIDENT_STATUSES = ("open", "investigating", "resolved", "false_positive")
 MAX_NOTE_CHARS = 2000
 

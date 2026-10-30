@@ -152,7 +152,7 @@ class ManagerAlertsRouteTests(_ServerMixin, unittest.TestCase):
         bad = [
             "unknown=1",
             "severity=urgent",
-            "source=ml",
+            "source=bogus",
             "limit=0",
             "limit=201",  # above Manager's own cap of 200
             "limit=abc",
