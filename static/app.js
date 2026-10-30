@@ -231,7 +231,27 @@ const PanopticonRender = (() => {
     for (const entry of items) list.append(node("li", auditLine(entry)));
     return list;
   }
-  return { text, node, timeOf, commandSummary, commandStateOf, targetSummary, auditLine, auditList };
+  // Automated-response status (Manager response_status). Acknowledging or
+  // resolving is never shown as containment; only verified success is "Contained".
+  const RESPONSE_STATUS = {
+    detected: "Detected", response_recorded: "Response recorded", simulated_containment: "Simulated containment (no host action)",
+    awaiting_approval: "Awaiting approval", response_executing: "Response executing", containment_failed: "Containment failed",
+    containment_unverified: "Containment reported, unverified", contained: "Contained (verified on endpoint)", resolved: "Manually resolved",
+  };
+  function responseStatusLabel(status) { return status == null ? null : RESPONSE_STATUS[status] || String(status); }
+  const POLICY_MODE = { record: "Record only", simulate: "Simulated", approval: "Approval required", auto: "Automatic", denied: "Denied by policy" };
+  function automationLines(action) {
+    const lines = [], decision = action && action.policy_decision, execution = action && action.execution;
+    if (action && action.response_status) lines.push("Response status: " + responseStatusLabel(action.response_status));
+    if (decision && typeof decision === "object") {
+      lines.push(`Policy ${text(decision.policy_id)} · ${POLICY_MODE[decision.mode] || text(decision.mode)} · response mode ${text(decision.global_mode)}`);
+      if (decision.simulation_status === "simulated" && decision.simulation) lines.push("Simulated (no host effect): would " + text(decision.simulation.would));
+      else if (decision.simulation_status === "refused" && decision.simulation) lines.push("Simulation refused: " + text(decision.simulation.error));
+    }
+    if (execution && execution.kind === "endpoint" && execution.outcome) lines.push(`Executed on endpoint · ${execution.outcome} · ${execution.verified ? "verified" : "not verified"}`);
+    return lines;
+  }
+  return { text, node, timeOf, commandSummary, commandStateOf, targetSummary, auditLine, auditList, responseStatusLabel, automationLines };
 })();
 
 // All browser calls are same-origin Console routes. The analyst credential
@@ -239,7 +259,7 @@ const PanopticonRender = (() => {
 document.addEventListener("DOMContentLoaded", () => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const { text, node, commandSummary, commandStateOf, targetSummary, auditList } = PanopticonRender;
+  const { text, node, commandSummary, commandStateOf, targetSummary, auditList, automationLines } = PanopticonRender;
   let lastPayload = null;
   let offset = 0, nextOffset = null, catalog = [];
   let analyst = null, retryRequest = null;
@@ -345,6 +365,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (action.host_id || action.agent_id) actionCell.append(node("span", [action.host_id, action.agent_id].filter(Boolean).join(" · "), "subline"));
     const target = targetSummary(action.target); if (target) actionCell.append(node("span", target, "subline"));
     if (action.requested_by) actionCell.append(node("span", "Requested by " + action.requested_by + " · " + action.request_reason, "subline"));
+    for (const line of automationLines(action)) actionCell.append(node("span", line, "subline automation"));
     const commandCell = node("td", commandSummary(action), "command-state");
     if (action.dispatch_blocker) commandCell.append(node("p", "Further delivery held by endpoint policy: " + text(action.dispatch_blocker)));
     if ((action.results || []).length || (action.receipts || []).length || (action.endpoint_evidence || []).length) {
@@ -625,6 +646,7 @@ document.addEventListener("DOMContentLoaded", () => {
     open.addEventListener("click", () => openIncident(String(inc.incident_id)));
     id.append(open, node("span", "host " + text(inc.host_id) + " · revision " + text(inc.revision), "subline"));
     status.append(statusBadge(inc.status));
+    if (inc.response_status) status.append(node("span", PanopticonRender.responseStatusLabel(inc.response_status), "subline"));
     row.append(sev, id, node("td", num(inc.score, 2), "mono"), node("td", list(inc.tactics)), node("td", text(inc.stage_count)), node("td", text(inc.root_process), "mono"), status, node("td", timeOf(inc.last_seen), "when"));
     return row;
   }
@@ -723,6 +745,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const li = node("li");
     li.append(node("strong", `${text(action.action)} · ${text(action.lifecycle_state)}`), node("span", commandSummary(action), "subline"));
     if (action.decided_reason) li.append(node("span", "Reason: " + text(action.decided_reason), "subline"));
+    for (const line of PanopticonRender.automationLines(action)) li.append(node("span", line, "subline automation"));
     if (Array.isArray(action.audit) && action.audit.length) li.append(auditList(action.audit));
     return li;
   }
@@ -736,7 +759,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("incident-chain").textContent = ev.attack_chain ? text(ev.attack_chain) : "";
     $("incident-meta").replaceChildren();
     const root = text(ev.root_cause_process ?? inc.root_process) + (ev.root_pid != null ? `[${ev.root_pid}]` : "") + (ev.root_inferred ? " (inferred: creation not observed)" : "");
-    for (const [key, value] of [["Status", text(inc.status).replace("_", " ")], ["Host", inc.host_id], ["Score", num(ev.incident_score ?? inc.score, 3)], ["rule confidence (prior, not calibrated)", num(inc.confidence, 2)], ["Revision", ev.revision ?? inc.revision], ["Stages", ev.stage_count ?? inc.stage_count], ["Tactics", list(ev.tactics_covered ?? inc.tactics)], ["Member alerts", inc.alert_count], ["First seen", timeOf(inc.first_seen)], ["Last seen", timeOf(inc.last_seen)], ["Root cause process", root], ["Provenance origin", ev.provenance_origin], ["Processes in scope", ev.processes_in_scope]]) pair($("incident-meta"), key, value);
+    for (const [key, value] of [["Status", text(inc.status).replace("_", " ")], ["Response status", PanopticonRender.responseStatusLabel(inc.response_status)], ["Host", inc.host_id], ["Score", num(ev.incident_score ?? inc.score, 3)], ["rule confidence (prior, not calibrated)", num(inc.confidence, 2)], ["Revision", ev.revision ?? inc.revision], ["Stages", ev.stage_count ?? inc.stage_count], ["Tactics", list(ev.tactics_covered ?? inc.tactics)], ["Member alerts", inc.alert_count], ["First seen", timeOf(inc.first_seen)], ["Last seen", timeOf(inc.last_seen)], ["Root cause process", root], ["Provenance origin", ev.provenance_origin], ["Processes in scope", ev.processes_in_scope]]) pair($("incident-meta"), key, value);
 
     const alerts = (Array.isArray(payload.alerts) ? payload.alerts : []).map(normalizeAlert).filter(Boolean);
     const alertsById = new Map(alerts.filter((a) => a.alert_id != null).map((a) => [String(a.alert_id), a]));
