@@ -100,6 +100,18 @@ class EvidenceSessionTests(unittest.TestCase):
                 self.assertEqual(status, 403)
                 self.assertEqual(json.loads(body)["detail"], "denied")
 
+    def test_shared_views_never_expose_scoped_forensic_context(self):
+        from app import shared_view_body
+
+        sensitive = {"response_actions": [{"response_id": "r1", "artifacts": [{"sha256": "hash"}],
+                                           "artifact_access": "granted", "forensic_context": {
+                                               "source_record_id": "private-source-record"}}]}
+        filtered = json.loads(shared_view_body(json.dumps(sensitive).encode()))
+        row = filtered["response_actions"][0]
+        self.assertIsNone(row["forensic_context"])
+        self.assertEqual(row["artifacts"], [])
+        self.assertNotIn("private-source-record", json.dumps(filtered))
+
     def test_two_browsers_use_their_own_credentials_and_cookie_contains_no_token(self):
         cookie_a, headers, identity = self.login()
         cookie_b, _, _ = self.login(TOKEN_B)

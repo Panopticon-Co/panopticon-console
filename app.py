@@ -347,6 +347,9 @@ def shared_view_body(body: bytes) -> bytes:
                 if key == "artifacts":
                     result[key] = []
                     changed = True
+                elif key == "forensic_context":
+                    result[key] = None
+                    changed = True
                 elif key == "artifact_access":
                     result[key] = "individual_evidence_identity_required"
                     changed = True
