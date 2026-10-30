@@ -30,6 +30,9 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   function showIdentity(value) {
     identity = value;
+    if (typeof CustomEvent === "function" && document.dispatchEvent) {
+      document.dispatchEvent(new CustomEvent("panopticon-identity-changed", {detail: value}));
+    }
     $("evidence-session-status").textContent = value
       ? "Evidence identity: " + value.analyst_id + " · " + value.role + " · case and endpoint grants required"
       : "Sign in with your individual analyst credential to inspect investigation evidence.";

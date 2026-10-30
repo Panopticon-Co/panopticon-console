@@ -4,6 +4,7 @@
 <script src="/artifact-verifier.js"></script>
 <script src="/artifact-download.js"></script>
 <script src="/evidence.js"></script>
+<script src="/triage.js"></script>
 <style>
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -238,6 +239,12 @@ textarea{font:inherit;color:inherit;background:var(--control);border:1px solid v
 <p id="evidence-session-status" role="status">Checking your evidence identity…</p>
 <form id="evidence-login-form" class="response-form"><label for="evidence-token">Individual analyst credential<input id="evidence-token" type="password" autocomplete="off" maxlength="512" required placeholder="Credential issued by your administrator"></label><div><button id="evidence-login" type="submit">Sign in to evidence</button><button id="evidence-logout" type="button" hidden>Sign out</button></div></form>
 <p class="subline">Evidence access follows your assigned case and endpoint scope. Credentials are held only for this browser session.</p></details>
+<details class="response-create" id="triage-panel"><summary>Automated investigation triage</summary>
+<p>Collect context when a rule fires. Only approved process, network and file-metadata collection is eligible. Critical and unclassified endpoints require analyst approval.</p>
+<button id="triage-refresh" type="button">Refresh triage</button>
+<p id="triage-message" role="status" aria-live="polite">Sign in with your individual identity above, then refresh.</p>
+<div id="triage-admin" hidden></div><div id="triage-runs"></div>
+<button id="triage-more" type="button" hidden>Load more investigations</button></details>
 <details class="response-create" id="response-request"><summary>Request a response action</summary>
 <form id="response-create-form" class="response-form">
 <label for="response-alert">Originating alert ID<input id="response-alert" maxlength="128" required placeholder="Paste an alert ID from the investigation"></label>

@@ -132,11 +132,15 @@ class EvidenceSessions:
                     or not isinstance(value.get("role"), str)
                     or not isinstance(value.get("permissions"), list)
                     or type(value.get("access_policy_version")) is not int
-                    or value["access_policy_version"] != 2
-                    or "artifact:read" not in value["permissions"]):
+                    or value["access_policy_version"] not in {2, 3}
+                    or not ({"artifact:read", "triage:manage"} & set(value["permissions"]))):
                 raise ValueError("not an artifact reader")
+            allowed = {"artifact:read"}
+            if value["access_policy_version"] == 3:
+                allowed |= {"triage:manage", "response:request", "response:decide"}
             return {"analyst_id": value["analyst_id"], "role": value["role"],
-                    "permissions": ["artifact:read"], "access_policy_version": 2}
+                    "permissions": sorted(allowed & set(value["permissions"])),
+                    "access_policy_version": value["access_policy_version"]}
         except (ValueError, TypeError) as exc:
             raise EvidenceError(403, "Identity is not eligible to read artifacts") from exc
 
@@ -152,6 +156,16 @@ class EvidenceSessions:
                                     "application/json")
                 return True
             path = None
+            if route in {"/api/evidence/triage/policies", "/api/evidence/triage/runs"}:
+                pairs = urllib.parse.parse_qsl(query, keep_blank_values=True,
+                                              strict_parsing=bool(query))
+                if (len(pairs) != len(dict(pairs)) or any(
+                        k not in {"limit", "offset"} or not re.fullmatch(r"[0-9]{1,7}", v)
+                        for k, v in pairs) or (route.endswith("policies") and pairs)):
+                    raise EvidenceError(400, "Invalid triage query")
+                path = "/api/v1/triage/" + route.rsplit("/", 1)[1]
+                if pairs:
+                    path += "?" + urllib.parse.urlencode(pairs)
             match = re.fullmatch(r"/api/evidence/cases/(" + ID + r")", route)
             if match and not query:
                 path = "/api/v1/response-actions/" + match.group(1) + "/export"
@@ -198,6 +212,26 @@ class EvidenceSessions:
             if body is None:
                 return True
             origin = self.origin(handler, write=True)
+            triage = re.fullmatch(r"/api/evidence/triage/(policies|assets|runs/(" + ID +
+                                  r")/cancel)", handler.path)
+            if triage:
+                sid, entry = self.live(handler)
+                if handler.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                    raise EvidenceError(415, "Triage changes require application/json")
+                # Manager validates the closed body, role and current policy inside its transaction.
+                value = json.loads(body)
+                if not isinstance(value, dict):
+                    raise EvidenceError(400, "Invalid triage change")
+                status, reply = exchange(self.manager_url, entry["token"],
+                                         "/api/v1/triage/" + triage.group(1),
+                                         json.dumps(value).encode())
+                with self.lock:
+                    if sid not in self.sessions or self.sessions[sid]["expires"] <= time.monotonic():
+                        raise EvidenceError(401, "Evidence session ended")
+                    if status == 401:
+                        self.sessions.pop(sid, None)
+                handler._send_bytes(status, reply, "application/json")
+                return True
             match = re.fullmatch(r"/api/evidence/artifacts/(" + ARTIFACT + r")/view", handler.path)
             if match:
                 sid, entry = self.live(handler)
