@@ -123,7 +123,7 @@ function matchesSearch(alert, query) {
 function familyOf(a) { const tags = Array.isArray(a.tags) ? a.tags.map((t) => String(t).toLowerCase()) : []; for (const f of FAMILIES) if (tags.includes(f)) return f; const keys = Object.keys(evidenceOf(a)); if (keys.some((k) => k.startsWith("image."))) return "image_load"; for (const f of ["registry", "network", "file"]) if (keys.some((k) => k.startsWith(f + "."))) return f; return "process"; }
 function timeOf(v) { const d = new Date(v); return v && Number.isFinite(d.getTime()) ? d.toLocaleString() : text(v); }
 function badge(a) { return node("span", severityOf(a) + (Number.isFinite(a.level) ? ` · L${a.level}` : ""), "sev sev-" + severityOf(a)); }
-function sourceBadge(a) { return node("span", sourceOf(a), "src src-" + sourceOf(a)); }
+function sourceBadge(a) { const s = sourceOf(a); return node("span", s === "ml" ? "ML" : s, "src src-" + s); }
 // The engine's optional ML stage: a score from a supervised model, shown as a
 // triage aid. An alert without an `ml` block was not scored -- never "benign".
 function mlOf(a) { return a.ml && typeof a.ml === "object" && !Array.isArray(a.ml) ? a.ml : null; }
@@ -613,7 +613,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function sevOf(s) { const v = String(s || "").toLowerCase(); return ["critical", "high", "medium", "low"].includes(v) ? v : "unknown"; }
   function sevBadge(severity, level) { return node("span", sevOf(severity) + (Number.isFinite(level) ? ` · L${level}` : ""), "sev sev-" + sevOf(severity)); }
-  function srcBadge(source) { const s = SOURCES.includes(String(source || "").toLowerCase()) ? String(source).toLowerCase() : "unknown"; return node("span", s, "src src-" + s); }
+  function srcBadge(source) { const s = SOURCES.includes(String(source || "").toLowerCase()) ? String(source).toLowerCase() : "unknown"; return node("span", s === "ml" ? "ML" : s, "src src-" + s); }
   function statusBadge(status) { return node("span", status == null ? "—" : String(status).replace("_", " "), "status-badge status-" + String(status || "unknown").replace(/[^a-z_]/g, "")); }
   function num(v, digits) { return Number.isFinite(v) ? v.toFixed(digits) : text(v); }
   function list(v) { return Array.isArray(v) ? v.map(text).join(", ") : text(v); }

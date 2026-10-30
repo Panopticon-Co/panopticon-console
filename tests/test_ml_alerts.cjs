@@ -30,7 +30,7 @@ vm.runInContext(fs.readFileSync('static/app.js', 'utf8').split('// DASHBOARD INI
   const rows = el('alerts-body').children;
   assert.equal(rows.length, 3);
   const badges = rows.map((r) => r.children[2].children[0]);
-  assert.deepEqual(badges.map((b) => b.textContent), ['ml', 'rule', 'rule']);
+  assert.deepEqual(badges.map((b) => b.textContent), ['ML', 'rule', 'rule']);
   assert.equal(badges[0].className, 'src src-ml');
   // Rule alert scored by the model: a chip with score and band. ML alert itself and unscored rule: none.
   const chips = rows.map((r) => r.children[1].children.find((c) => String(c.className).startsWith('ml-chip')));
