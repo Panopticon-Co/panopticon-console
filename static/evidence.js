@@ -27,9 +27,13 @@ document.addEventListener("DOMContentLoaded", () => {
     generation++; flight?.abort(); flight = null; selected = null; downloader.clear();
     $("evidence-content").textContent = ""; $("evidence-items").replaceChildren();
     $("evidence-custody").replaceChildren(); $("evidence-message").textContent = "";
+    $("evidence-forensics")?.replaceChildren();
   }
   function showIdentity(value) {
     identity = value;
+    if (typeof CustomEvent === "function" && document.dispatchEvent) {
+      document.dispatchEvent(new CustomEvent("panopticon-identity-changed", {detail: value}));
+    }
     $("evidence-session-status").textContent = value
       ? "Evidence identity: " + value.analyst_id + " · " + value.role + " · case and endpoint grants required"
       : "Sign in with your individual analyst credential to inspect investigation evidence.";
@@ -114,7 +118,9 @@ document.addEventListener("DOMContentLoaded", () => {
       $("evidence-content").textContent = "";
       $("evidence-message").textContent = error.name === "AbortError"
         ? "Transfer paused. Retry to resume in this session." : error.message;
-      if ([401, 403, 409, 410].includes(error.status)) { downloader.clear(); $("evidence-items").replaceChildren(); }
+      if ([401, 403, 409, 410].includes(error.status)) {
+        downloader.clear(); $("evidence-items").replaceChildren(); $("evidence-forensics")?.replaceChildren();
+      }
       if (error.status === 401) showIdentity(null);
     } finally { if (current === generation) { flight = null; button.disabled = false; $("evidence-cancel").hidden = true; } }
   }
@@ -135,6 +141,27 @@ document.addEventListener("DOMContentLoaded", () => {
       $("evidence-title").textContent = "Evidence · " + record.alert_id + " · " + record.host_id;
       if (record.artifact_access !== "granted") {
         $("evidence-message").textContent = "An evidence administrator must grant access to this case and endpoint."; return;
+      }
+      const forensic = record.forensic_context, panel = $("evidence-forensics");
+      if (forensic && panel) {
+        panel.append(node("h3", "Forensic collection context"));
+        if (forensic.state === "planned") {
+          const plan = forensic.plan, context = plan.request.context;
+          panel.append(node("p", "Collection: " + plan.request.action + " · " + plan.evidence_kind),
+            node("p", "Original observation: " + context.observed_at),
+            node("p", "Source: " + context.source_id + " · record " + context.source_record_id),
+            node("p", "Rule: " + context.rule_id + " · asset class " + plan.asset_class),
+            node("p", "Server response tier: " + forensic.effective_response_tier + " · " + forensic.response_origin));
+          const process = forensic.native_process_identity || plan.request.process;
+          if (process) panel.append(node("p", "Process PID " + process.pid + " · native start token " + process.start_time_ticks +
+            (process.boot_id ? " · boot " + process.boot_id : "")));
+          if (plan.request.file) panel.append(node("p", "File metadata/hash only: " + plan.request.file.path));
+        } else panel.append(node("p", forensic.reason || "Historical forensic planning context is unavailable."));
+        panel.append(node("p", "Planning context does not authorize execution. Verify evidence signatures and hashes before viewing or exporting content."));
+        for (const reference of forensic.evidence_references || []) {
+          panel.append(node("p", "Evidence " + (reference.manifest?.artifact_id || reference.artifact_id) +
+            " · " + reference.metadata_status + " · " + (reference.trust_status || "verification required")));
+        }
       }
       if (!record.artifacts?.length) $("evidence-message").textContent = "No investigation artifacts have been retained for this response yet.";
       for (const item of record.artifacts || []) {

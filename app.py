@@ -54,6 +54,7 @@ _STATIC_ROUTES = {
     "/artifact-verifier.js": ("artifact-verifier.js", "application/javascript; charset=utf-8"),
     "/artifact-download.js": ("artifact-download.js", "application/javascript; charset=utf-8"),
     "/evidence.js": ("evidence.js", "application/javascript; charset=utf-8"),
+    "/triage.js": ("triage.js", "application/javascript; charset=utf-8"),
 }
 
 # Alert fields the UI relies on. Declared here so a test can pin the contract
@@ -345,6 +346,9 @@ def shared_view_body(body: bytes) -> bytes:
             for key, item in value.items():
                 if key == "artifacts":
                     result[key] = []
+                    changed = True
+                elif key == "forensic_context":
+                    result[key] = None
                     changed = True
                 elif key == "artifact_access":
                     result[key] = "individual_evidence_identity_required"

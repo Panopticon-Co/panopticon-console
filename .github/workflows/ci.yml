@@ -40,6 +40,7 @@ jobs:
           node --check static/artifact-verifier.js
           node --check static/artifact-download.js
           node --check static/evidence.js
+          node --check static/triage.js
           for test in tests/*.cjs; do
             echo "== $test"
             node "$test"

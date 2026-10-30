@@ -16,7 +16,12 @@ const item = {artifact_id: "art_" + "a".repeat(64), kind: "process_snapshot", co
               signing: {trust_status: "active_key", key_version: 1}};
 let identity = {signed_in: true, analyst_id: "reader", role: "analyst", identity_version: "a".repeat(22)};
 let record = {response_id: "r1", alert_id: "alert-1", host_id: "host-1", agent_id: "agent-1", command_id: "command-1",
-              command: {correlation_id: "correlation-1"}, artifact_access: "granted", artifacts: [item]};
+              command: {correlation_id: "correlation-1"}, artifact_access: "granted", artifacts: [item],
+              forensic_context: {state: "planned", effective_response_tier: "ANALYST_APPROVAL", response_origin: "analyst",
+                evidence_references: [{manifest: {artifact_id: item.artifact_id}, metadata_status: "consistent_with_retained_command", trust_status: "active_key"}],
+                plan: {evidence_kind: "process_snapshot", asset_class: "critical", request: {action: "COLLECT_PROCESS_INFO",
+                  context: {source_id: "<img onerror=alert(1)>", source_record_id: "original-record", observed_at: "original-time", rule_id: "original-rule"},
+                  process: {pid: 42, start_time_ticks: "18446744073709551615", boot_id: "original-boot"}}}}};
 let error = null, deferred = null, clearCount = 0, exportCount = 0;
 const calls = [];
 const verified = {content: '{"command_line":"<img src=x onerror=alert(1)>"}',
@@ -60,6 +65,8 @@ const button = label => card().children.find(child => child.textContent === labe
   await window.PanopticonEvidence.openCase("r1");
   assert.equal(el("evidence-dialog").open, true);
   assert.equal(el("evidence-items").children.length, 1);
+  assert.ok(el("evidence-forensics").children.some(child => /<img onerror=alert\(1\)>.*original-record/.test(child.textContent)));
+  assert.ok(el("evidence-forensics").children.some(child => /18446744073709551615/.test(child.textContent)));
   await button("Verify and view").listeners.click();
   assert.equal(el("evidence-content").textContent, verified.content);
   assert.match(el("evidence-message").textContent, /Signature and SHA-256 verified/);
@@ -81,6 +88,7 @@ const button = label => card().children.find(child => child.textContent === labe
   record = {...record, artifact_access: "requires_case_endpoint_grant"};
   await window.PanopticonEvidence.openCase("r1");
   assert.equal(el("evidence-items").children.length, 0);
+  assert.equal(el("evidence-forensics").children.length, 0);
   assert.match(el("evidence-message").textContent, /administrator must grant/);
   record = {...record, artifact_access: "granted", artifacts: [{...item,
     signing: {trust_status: "compromised_key", key_version: 1, compromise_reason: "Key stolen"}}]};

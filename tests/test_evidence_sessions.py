@@ -67,6 +67,51 @@ class EvidenceSessionTests(unittest.TestCase):
         self.versions[cookie] = json.loads(body)["identity_version"]
         return cookie, headers, json.loads(body)
 
+    def test_triage_uses_individual_identity_and_preserves_manager_refusals(self):
+        original = self.backend
+
+        def backend(url, token, path, payload=None):
+            if path == "/api/v1/analysts/me":
+                return 200, json.dumps({"analyst_id": "triage-admin", "role": "triage_admin",
+                                       "permissions": ["triage:manage"],
+                                       "access_policy_version": 3}).encode()
+            return original(url, token, path, payload)
+
+        with patch("evidence_sessions.exchange", side_effect=backend):
+            cookie, _, value = self.login()
+            self.assertEqual(value["permissions"], ["triage:manage"])
+            self.assertEqual(self.request("/api/evidence/triage/policies", cookie=cookie)[0], 200)
+            self.assertEqual(self.request("/api/evidence/triage/policies", cookie=cookie,
+                                          method="POST", value={"policy": "manager-validates"})[0], 200)
+            self.assertEqual(self.calls[-1][1:], (TOKEN_A, "/api/v1/triage/policies"))
+            count = len(self.calls)
+            self.assertEqual(self.request("/api/evidence/triage/assets", cookie=cookie,
+                                          method="POST", value={},
+                                          headers={"Origin": "https://attacker.test"})[0], 403)
+            self.assertEqual(len(self.calls), count)
+            for route in ("/api/evidence/triage/policies?url=bad",
+                          "/api/evidence/triage/runs?limit=1&limit=2",
+                          "/api/evidence/triage/runs?offset=-1"):
+                self.assertEqual(self.request(route, cookie=cookie)[0], 400)
+            self.assertEqual(self.request("/api/evidence/triage/policies")[0], 401)
+            with patch("evidence_sessions.exchange", return_value=(403, b'{"detail":"denied"}')):
+                status, _, body = self.request("/api/evidence/triage/runs/alert-1/cancel",
+                                               cookie=cookie, method="POST", value={"reason": "stop"})
+                self.assertEqual(status, 403)
+                self.assertEqual(json.loads(body)["detail"], "denied")
+
+    def test_shared_views_never_expose_scoped_forensic_context(self):
+        from app import shared_view_body
+
+        sensitive = {"response_actions": [{"response_id": "r1", "artifacts": [{"sha256": "hash"}],
+                                           "artifact_access": "granted", "forensic_context": {
+                                               "source_record_id": "private-source-record"}}]}
+        filtered = json.loads(shared_view_body(json.dumps(sensitive).encode()))
+        row = filtered["response_actions"][0]
+        self.assertIsNone(row["forensic_context"])
+        self.assertEqual(row["artifacts"], [])
+        self.assertNotIn("private-source-record", json.dumps(filtered))
+
     def test_two_browsers_use_their_own_credentials_and_cookie_contains_no_token(self):
         cookie_a, headers, identity = self.login()
         cookie_b, _, _ = self.login(TOKEN_B)
