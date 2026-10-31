@@ -6,39 +6,43 @@
   const STORAGE_KEY = "panopticon.theme.v1";
   const modes = {
     dark: {
-      bg: "#0B1016", panel: "#111B25", sidebar: "#0E161F",
-      control: "#192634", border: "#526477", text: "#E8EEF5",
-      muted: "#A2B2C3", heading: "#182330", hover: "#1A2836",
-      evidence: "#0B131C", overlay: "#02070CBF",
+      bg: "#0E0A18", panel: "#151024", sidebar: "#09060F",
+      control: "#1C1630", border: "#2C2444", text: "#EDEAF6",
+      muted: "#A79FC2", heading: "#191329", hover: "#1E1833",
+      evidence: "#100C1C", overlay: "#05030ACC",
+      "line-strong": "#463C64", raised: "#1A1430", shadow: "#00000066",
+      "rail-text": "#EDEAF6", "rail-muted": "#9C93B8",
       critical: "#FF8298", "critical-bg": "#3B2431",
       high: "#FFB37A", "high-bg": "#382D23",
       medium: "#EAD374", "medium-bg": "#323120",
-      low: "#8ECBFF", "low-bg": "#1F3349", ok: "#5BE0A6",
-      unknown: "#B5C2CF", "unknown-bg": "#27333E"
+      low: "#8ECBFF", "low-bg": "#1F3349", ok: "#5BE0A6", "ok-bg": "#16302A",
+      unknown: "#B8B1CC", "unknown-bg": "#262038"
     },
     light: {
-      bg: "#F3F6FA", panel: "#FFFFFF", sidebar: "#EAF0F6",
-      control: "#F6F8FB", border: "#78899B", text: "#182635",
-      muted: "#4C6074", heading: "#EAF0F6", hover: "#EDF2F7",
-      evidence: "#F3F6FA", overlay: "#18263580",
-      critical: "#A51D3B", "critical-bg": "#FFE5EB",
-      high: "#93420B", "high-bg": "#FFF0E2",
-      medium: "#715500", "medium-bg": "#FFF5CC",
-      low: "#165A96", "low-bg": "#E4F1FF", ok: "#0F7A4D",
-      unknown: "#46586B", "unknown-bg": "#E8EEF4"
+      bg: "#F6F5FA", panel: "#FFFFFF", sidebar: "#150D29",
+      control: "#FFFFFF", border: "#E7E3F0", text: "#1C1530",
+      muted: "#5F5775", heading: "#FAF9FC", hover: "#F5F2FB",
+      evidence: "#F8F6FC", overlay: "#1C15305C",
+      "line-strong": "#C9C1DA", raised: "#FFFFFF", shadow: "#2A1A5214",
+      "rail-text": "#F3F0FA", "rail-muted": "#A99FC4",
+      critical: "#B3213F", "critical-bg": "#FDECEF",
+      high: "#A0470B", "high-bg": "#FDF1E7",
+      medium: "#765700", "medium-bg": "#FBF4DC",
+      low: "#1B5D9E", "low-bg": "#EAF2FC", ok: "#0F7A4D", "ok-bg": "#E6F5EE",
+      unknown: "#5F5775", "unknown-bg": "#F1EEF6"
     }
   };
   const palettes = {
+    violet: { label: "Violet", dark: ["#C3AEFF", "#2A2048", "#3A2C66"], light: ["#5B2DB8", "#F0EAFC", "#E6DBFA"] },
     emerald: { label: "Emerald", dark: ["#63E3BE", "#1C3533", "#284B40"], light: ["#09674F", "#DDF4EA", "#C2EBD9"] },
     ocean: { label: "Ocean", dark: ["#80C7FF", "#19334B", "#244967"], light: ["#155F9A", "#E0EFFF", "#C7E1F8"] },
-    violet: { label: "Violet", dark: ["#C7ADFF", "#322846", "#493660"], light: ["#6940AC", "#EEE5FF", "#E0D1FA"] },
     amber: { label: "Amber", dark: ["#F5CC76", "#3A3020", "#51432A"], light: ["#805300", "#FFF0D2", "#F5DDAA"] }
   };
   const system = window.matchMedia("(prefers-color-scheme: dark)");
   const root = document.documentElement;
   const validate = (value) => ({
-    mode: ["dark", "light", "system"].includes(value?.mode) ? value.mode : "system",
-    palette: Object.hasOwn(palettes, value?.palette) ? value.palette : "emerald"
+    mode: ["dark", "light", "system"].includes(value?.mode) ? value.mode : "light",
+    palette: Object.hasOwn(palettes, value?.palette) ? value.palette : "violet"
   });
   function read() {
     try { return validate(JSON.parse(localStorage.getItem(STORAGE_KEY))); }
@@ -386,7 +390,7 @@ document.addEventListener("DOMContentLoaded", () => {
       commandCell.append(details);
     }
     const state = commandStateOf(action); if (state) commandCell.className += " cmd-" + String(state).toLowerCase();
-    row.append(node("td", action.lifecycle_state), actionCell, node("td", action.tier), node("td", action.alert_id), node("td", action.created_at), node("td", action.decided_reason), commandCell, auditCell(action), decisionCell(action));
+    row.append(node("td", action.lifecycle_state, "resp-state resp-" + String(action.lifecycle_state || "unknown").toLowerCase()), actionCell, node("td", action.tier), node("td", action.alert_id), node("td", action.created_at), node("td", action.decided_reason), commandCell, auditCell(action), decisionCell(action));
     return row;
   }
   async function decide(action, operation, button) {
