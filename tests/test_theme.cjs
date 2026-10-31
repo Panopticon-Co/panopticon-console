@@ -11,7 +11,7 @@ function boot(saved, blocked = false) {
   return {styles,root,system,controls,windowEvents,get stored(){return stored;},set stored(v){stored=v;}};
 }
 const env = boot('bad json');
-assert.equal(env.root.dataset.theme,'dark'); assert.equal(env.controls['theme-mode'].value,'system');
+assert.equal(env.root.dataset.theme,'light'); assert.equal(env.controls['theme-mode'].value,'light'); assert.equal(env.root.dataset.palette,'violet');
 const choose = (id,value)=>env.controls[id].change({target:{value}});
 function luminance(hex){const rgb=hex.slice(1).match(/../g).slice(0,3).map(v=>parseInt(v,16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;}
 function contrast(a,b){const x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);}
@@ -25,8 +25,8 @@ choose('theme-mode','light');env.system.matches=true;env.system.change();assert.
 choose('theme-mode','system');assert.equal(env.root.dataset.theme,'dark');env.system.matches=false;env.system.change();assert.equal(env.root.dataset.theme,'light');
 assert.equal(boot(env.stored).root.dataset.palette,'amber');
 env.stored='{"mode":"dark","palette":"ocean"}';env.windowEvents.storage({key:'panopticon.theme.v1'});assert.equal(env.root.dataset.palette,'ocean');
-env.stored=null;env.windowEvents.storage({key:null});assert.equal(env.controls['theme-mode'].value,'system');
-assert.equal(boot('{"mode":"bad","palette":"__proto__"}').root.dataset.palette,'emerald');
+env.stored=null;env.windowEvents.storage({key:null});assert.equal(env.controls['theme-mode'].value,'light');
+assert.equal(boot('{"mode":"bad","palette":"__proto__"}').root.dataset.palette,'violet');
 const locked=boot(null,true);locked.controls['theme-mode'].change({target:{value:'light'}});assert.equal(locked.root.dataset.theme,'light');
 const html=fs.readFileSync('static/index.html','utf8');assert.ok(!/#[0-9a-f]{6}/i.test(html));assert.ok(html.indexOf('/app.js')<html.indexOf('<body>'));
 console.log('PASS: 8 palette/mode combinations, contrast, system changes, persistence, cross-tab sync, invalid/blocked storage, centralized tokens');

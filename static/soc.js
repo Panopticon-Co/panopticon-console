@@ -12,6 +12,15 @@
   const VIEWS = ["overview", "agents", "events", "investigations", "graph", "response", "health"];
   const ALIASES = { alerts: "investigations", incidents: "investigations" };
   const MAX_EVENTS = 3000;
+  const VIEW_META = {
+    overview: ["Security operations", "Overview", "Telemetry from endpoint agents → detection → investigation → analyst-approved response."],
+    agents: ["Fleet", "Agents", "Enrolled endpoints, when they last reported, and whether they accept response commands."],
+    events: ["Telemetry", "Live events", "Normalized endpoint events as the Manager stores them, streaming every two seconds."],
+    investigations: ["Detection", "Investigations", "Alerts from the detection engine and the incidents it reconstructed from them."],
+    graph: ["Provenance", "Attack graph", "Process lineage rebuilt from telemetry, with the detection engine's attack chain highlighted."],
+    response: ["Containment", "Response center", "Recommended actions, analyst decisions, command outcomes and the audit trail."],
+    health: ["Platform", "System health", "Console, Manager API, database and detection engine status. Agent connectivity lives under Agents."],
+  };
 
   const state = {
     events: [], eventIds: new Set(), cursor: null, paused: false, newIds: new Set(),
@@ -70,6 +79,8 @@
     for (const s of document.querySelectorAll("[data-view]")) s.hidden = !s.dataset.view.split(" ").includes(view);
     for (const a of document.querySelectorAll("nav a[data-nav]")) a.classList.toggle("active", a.dataset.nav === view);
     document.body.dataset.view = view;
+    const [eyebrow, title, sub] = VIEW_META[view];
+    if ($("page-title")) { $("page-eyebrow").textContent = eyebrow; $("page-title").textContent = title; $("page-sub").textContent = sub; document.title = `${title} · Panopticon`; }
     if (view === "graph") {
       const params = new URLSearchParams((location.hash.split("?")[1]) || "");
       const key = params.toString();
@@ -81,7 +92,8 @@
       }
       renderGraph();
     }
-    if (raw === "alerts" || raw === "incidents") { const t = $(raw); if (t && t.scrollIntoView) t.scrollIntoView(); } else window.scrollTo(0, 0);
+    if (raw === "alerts" || raw === "incidents") { const t = $(raw); if (t && t.scrollIntoView) t.scrollIntoView(); }
+    else { window.scrollTo(0, 0); requestAnimationFrame(() => window.scrollTo(0, 0)); }
   }
   function go(view) { if (location.hash === "#" + view) route(); else location.hash = view; }
 
@@ -176,7 +188,7 @@
       tile("Database", ready ? (dbReady ? "Connected" : "Not ready") : "—", st ? `${(sum(ev) + sum(rec)).toLocaleString()} telemetry rows stored` : ready ? txt(ready.reason) : "not reported", ready ? (dbReady ? "ok" : "bad") : "warn", () => go("health")),
       tile("Detection engine", worker ? (worker.alive ? "Running" : "Stopped") : "—", st ? `${(ev.done || 0) + (rec.done || 0)} analysed · ${(ev.pending || 0) + (rec.pending || 0)} queued` : "not reported", worker ? (worker.alive ? "ok" : "bad") : "warn", () => go("health")),
       tile("Agents online", ag && !ag.error ? `${online} / ${agents.length}` : "—", sources.length ? `+ ${sources.length} unenrolled source${sources.length > 1 ? "s" : ""} (${liveSources} active)` : "enrolled agents", online || liveSources ? "ok" : "warn", () => go("agents")),
-      tile("Event rate", `${eventsPerMinute()}/min`, "ingested in the last 60 s", null, () => go("events")),
+      tile("Event rate", `${eventsPerMinute()}/min`, "ingested in the last minute", null, () => go("events")),
       tile("Alerts", st ? st.alerts.toLocaleString() : "—", st ? `${st.incidents_open} open incident${st.incidents_open === 1 ? "" : "s"}` : "", st && st.alerts ? "high" : null, () => go("investigations")),
       tile("Pending approvals", pending == null ? "—" : String(pending), "response actions awaiting an analyst", pending ? "medium" : null, () => go("response")),
     );
@@ -192,6 +204,9 @@
     box.replaceChildren(
       el("div", { class: "story-head" }, sevChip(inc.severity), el("strong", {}, "Incident " + txt(inc.incident_id)), el("span", { class: "muted" }, `${txt(inc.host_id)} · ${txt(inc.status).replace("_", " ")} · ${txt(inc.stage_count)} stages · last seen ${ago(inc.last_seen)}`)),
       el("ol", { class: "story-chain" }, (tactics.length ? tactics : ["tactics not reported"]).map((t) => el("li", {}, t))),
+      el("dl", { class: "story-meta" },
+        ...[["Score", inc.score != null ? Number(inc.score).toFixed(3) : null], ["Member alerts", inc.alert_count], ["First seen", inc.first_seen ? clock(inc.first_seen) : null], ["Last seen", inc.last_seen ? clock(inc.last_seen) : null]]
+          .map(([k, v]) => el("div", {}, el("dt", {}, k), el("dd", {}, txt(v))))),
       inc.root_process ? el("p", { class: "mono" }, "Root process: " + inc.root_process) : null,
       el("div", { class: "story-actions" },
         el("button", { type: "button", class: "primary", onclick: () => openGraphForIncident(String(inc.incident_id)) }, "Open attack graph"),
@@ -218,8 +233,8 @@
       el("td", {}, statusChip(a.status)),
       el("td", {}, el("strong", {}, txt(a.hostname || a.host_id)), el("div", { class: "subline mono" }, `${txt(a.agent_id)} · host ${txt(a.host_id)}`)),
       el("td", {}, txt(a.os)),
-      el("td", {}, enrolled ? clock(a.enrolled_at) : chip("not enrolled", "warn")),
-      el("td", { title: txt(a.last_seen) }, ago(a.last_seen)),
+      el("td", { class: "nowrap", title: txt(a.enrolled_at) }, enrolled ? clock(a.enrolled_at) : chip("not enrolled", "warn")),
+      el("td", { class: "nowrap", title: txt(a.last_seen) }, ago(a.last_seen)),
       el("td", {}, `${(a.event_count || 0).toLocaleString()} events` + (a.record_count ? ` · ${a.record_count.toLocaleString()} records` : "")),
       el("td", {}, txt(a.last_category)),
       el("td", {}, enrolled ? (a.response_channel ? chip("response enabled", "bad") : chip("telemetry only", "muted")) : chip("replay / unauthenticated", "warn")),
@@ -233,6 +248,15 @@
     if (!ag || ag.error) { body.replaceChildren(el("tr", {}, el("td", { colspan: 9, class: "muted" }, ag ? "Agent inventory not available: " + ag.error : "Loading…"))); return; }
     const rows = ag.agents.map((a) => agentRow(a, true)).concat(ag.unenrolled_sources.map((a) => agentRow(a, false)));
     body.replaceChildren(...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 9, class: "muted" }, "No agent has enrolled or sent telemetry yet."))]));
+    const all = ag.agents.filter((a) => a.status !== "revoked");
+    const count = (st) => all.filter((a) => a.status === st).length;
+    const sum = $("agents-summary");
+    if (sum && changed(sum, ag.agents.map((a) => [a.agent_id, a.status, a.event_count, a.response_channel]).concat(ag.unenrolled_sources.length))) sum.replaceChildren(
+      tile("Online", String(count("online")), "reported in the last 2 minutes", count("online") ? "ok" : "warn"),
+      tile("Stale", String(count("stale")), "silent 2–15 minutes", count("stale") ? "warn" : null),
+      tile("Offline", String(count("offline") + count("never_seen")), "silent for longer, or never reported", count("offline") + count("never_seen") ? "bad" : null),
+      tile("Response enabled", String(all.filter((a) => a.response_channel).length), "agents that accept commands", null),
+      tile("Unenrolled sources", String(ag.unenrolled_sources.length), "telemetry without an enrolled identity", ag.unenrolled_sources.length ? "warn" : null));
     const t = ag.thresholds_seconds || {};
     $("agents-note").textContent = `Online = telemetry ingested within ${t.online} s; stale = within ${t.stale} s. Connectivity is measured from ingested telemetry, separately from Manager service health. "Unenrolled" sources sent telemetry without an enrolled identity (for example the offline replay tool).`;
   }
@@ -245,10 +269,10 @@
     return el("tr", { class: (state.newIds.has(key) ? "flash " : "") + "sev-row-" + sev(e.severity), onclick: open, tabindex: 0 },
       el("td", { class: "mono", title: "ingested " + txt(e.ingested_at) }, clock(e.timestamp)),
       el("td", {}, sevChip(e.severity)),
-      el("td", {}, txt(e.host_id)),
-      el("td", {}, el("strong", {}, e.category), el("div", { class: "subline" }, `${txt(e.type)} · ${txt(e.source)}`)),
+      el("td", { class: "nowrap" }, txt(e.host_id)),
+      el("td", { class: "nowrap", title: "source: " + txt(e.source) }, el("strong", {}, e.category), el("span", { class: "muted" }, " · " + txt(e.type))),
       el("td", { class: "mono wrap" }, eventSummary(e)),
-      el("td", {}, e.alerts && e.alerts.length ? e.alerts.map((a) => el("div", { class: "mono" }, a.rule_id)) : el("span", { class: "muted" }, txt(e.detect_state))),
+      el("td", { class: "nowrap" }, e.alerts && e.alerts.length ? e.alerts.map((a) => el("div", { class: "mono rule" }, a.rule_id)) : el("span", { class: "muted" }, e.detect_state === "done" ? "analysed · no alert" : txt(e.detect_state))),
     );
   }
   function filteredEvents() {
@@ -336,7 +360,34 @@
       if (!nodes.has(key)) { nodes.set(key, { key, type: e.category, name: String(label), events: [], alerts: [], start: at }); edges.push({ from: n.key, to: key, kind: e.category }); }
       const leaf = nodes.get(key); leaf.events.push(e); leaf.alerts.push(...(e.alerts || []));
     }
-    return { nodes, edges };
+    return groupLeaves({ nodes, edges });
+  }
+
+  // A process with many leaves of one kind (e.g. 30 outbound connections) is
+  // collapsed into one counted node so the tree stays legible. Leaves that
+  // carry an alert are never grouped.
+  const GROUP_OVER = 4;
+  function groupLeaves(graph) {
+    const buckets = new Map();
+    for (const e of graph.edges) {
+      const leaf = graph.nodes.get(e.to);
+      if (!leaf || leaf.type === "process" || leaf.alerts.length) continue;
+      const k = e.from + "|" + leaf.type;
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(leaf);
+    }
+    for (const [k, leaves] of buckets) {
+      if (leaves.length <= GROUP_OVER) continue;
+      const [from] = k.split(/\|(?=[^|]+$)/);
+      const type = leaves[0].type, gkey = k + "|group";
+      const drop = new Set(leaves.map((l) => l.key));
+      for (const key of drop) graph.nodes.delete(key);
+      graph.edges = graph.edges.filter((e) => !drop.has(e.to));
+      graph.nodes.set(gkey, { key: gkey, type, group: true, name: `${leaves.length} ${type === "network" ? "destinations" : type === "dns" ? "lookups" : type === "file" ? "files" : "keys"}`,
+        members: leaves.map((l) => l.name), events: leaves.flatMap((l) => l.events), alerts: [], start: Math.min(...leaves.map((l) => l.start)) });
+      graph.edges.push({ from, to: gkey, kind: type });
+    }
+    return graph;
   }
 
   // Alerting nodes, their ancestors (the chain), and the chain root's subtree.
@@ -379,7 +430,7 @@
   }
 
   const ICON = { process: "⬢", network: "⇄", dns: "◎", file: "▤", registry: "⌘" };
-  const NODE_W = 178, NODE_H = 38, COL = 240, ROW = 54, PAD = 28;
+  const NODE_W = 166, NODE_H = 38, COL = 204, ROW = 50, PAD = 24;
   function renderGraph() {
     const canvas = $("graph-svg"); if (!canvas) return;
     const hosts = [...new Set(state.events.map((e) => e.host_id))].sort();
@@ -391,8 +442,13 @@
     const scoped = focus && focus.keep.size && !$("graph-all").checked;
     const L = layout(graph, scoped ? focus.keep : null);
     const maxX = Math.max(0, ...[...L.pos.values()].map((p) => p.x));
-    const width = Math.max(640, PAD * 2 + maxX * COL + NODE_W), height = Math.max(320, PAD * 2 + L.rows * ROW);
+    // Reserve room for the inspector, and cap small trees near 1:1 so nodes do not balloon.
+    canvas.closest(".graph-wrap").classList.toggle("inspecting", !$("graph-node").hidden);
+    const avail = canvas.clientWidth || 1000;
+    const width = Math.max(640, avail / 1.1, PAD * 2 + maxX * COL + NODE_W), height = Math.max(320, PAD * 2 + L.rows * ROW);
     canvas.setAttribute("viewBox", canvas.dataset.vb || `0 0 ${width} ${height}`);
+    // Fit the canvas height to the tree so a wide chain is not letterboxed.
+    if (!canvas.dataset.vb && canvas.clientWidth) canvas.style.height = Math.round(Math.min(window.innerHeight * 0.72, Math.max(360, canvas.clientWidth * height / width))) + "px";
     const g = svg("g");
     const at = (k) => { const p = L.pos.get(k); return { x: PAD + p.x * COL, y: PAD + p.y * ROW }; };
     for (const e of L.edges) {
@@ -413,13 +469,13 @@
       nowKnown.add(n.key);
       const grp = svg("g", { class: cls.join(" "), transform: `translate(${p.x},${p.y})`, tabindex: 0, role: "button" });
       grp.append(svg("rect", { width: NODE_W, height: NODE_H, rx: 7 }));
-      const t1 = svg("text", { x: 10, y: 16, class: "n-title" }); t1.textContent = `${ICON[n.type] || "•"} ${String(n.name || "?").split("\\").pop().slice(0, 24)}`;
+      const t1 = svg("text", { x: 10, y: 16, class: "n-title" }); t1.textContent = `${ICON[n.type] || "•"} ${String(n.name || "?").split("\\").pop().slice(0, 21)}`;
       const t2 = svg("text", { x: 10, y: 30, class: "n-sub" });
       const alertsLabel = n.alerts.length ? ` · ${n.alerts.length} alert${n.alerts.length > 1 ? "s" : ""}` : "";
-      t2.textContent = n.type === "process" ? `pid ${n.pid}` + (n.observed ? (n.ended ? " · exited" : "") : " · start not observed") + alertsLabel : `${n.type} · ${n.events.length}×` + alertsLabel;
+      t2.textContent = n.type === "process" ? `pid ${n.pid}` + (n.observed ? (n.ended ? " · exited" : "") : " · not observed") + alertsLabel : `${n.events.length} event${n.events.length > 1 ? "s" : ""}` + alertsLabel;
       const title = svg("title"); title.textContent = n.command_line || n.name || "";
       grp.append(t1, t2, title);
-      grp.addEventListener("click", () => { state.graphSelected = n.key; renderGraph(); });
+      grp.addEventListener("click", () => { state.graphSelected = n.key; $("graph-node").hidden = false; renderGraph(); });
       g.append(grp);
     }
     state.graphKnown = nowKnown;
@@ -442,10 +498,11 @@
       add("Parent (as reported)", n.parent); add("User", n.user); add("Started", n.timestamp); add("Exited", n.ended);
       add("Reported by", (n.sources || []).join(", "));
       add("Observation", n.observed ? "process creation observed" : "creation not observed — known only from " + (n.inferred === "parent" ? "a child's parent fields" : n.inferred === "target" ? "another process accessing it" : "its own activity"));
-    } else { add("Type", n.type); add("Value", n.name); }
+    } else if (n.group) { add("Type", n.type + " (grouped)"); add("Count", n.members.length); add("Members", n.members.slice(0, 40).join("\n") + (n.members.length > 40 ? `\n… ${n.members.length - 40} more` : "")); }
+    else { add("Type", n.type); add("Value", n.name); }
     add("Events", n.events.length);
     const uniq = [...new Map(n.alerts.map((a) => [a.alert_id, a])).values()];
-    box.replaceChildren(el("h3", {}, n.type === "process" ? "Process" : n.type), dl,
+    box.replaceChildren(el("button", { type: "button", class: "node-close", onclick: () => { state.graphSelected = null; box.hidden = true; renderGraph(); } }, "Close"), el("h3", {}, n.type === "process" ? "Process" : n.type), dl,
       uniq.length ? el("h3", {}, "Alerts on this node") : null,
       uniq.length ? el("ul", { class: "member-list" }, uniq.map((a) => el("li", {}, sevChip(a.severity), el("button", { type: "button", class: "linkish", onclick: () => openAlertById(a.alert_id) }, `${a.rule_id} · ${a.alert_id}`)))) : null,
       el("h3", {}, "Events"), el("ul", { class: "member-list" }, n.events.slice(-8).reverse().map((e) => el("li", { class: "mono" }, `${clock(e.timestamp)} ${e.category}/${txt(e.type)} · ${txt(e.source)}`))));
@@ -465,7 +522,7 @@
     state.graphHost = host; state.graphFocus = focus; state.graphSelected = null; state.graphKnown = new Set();
     $("graph-all").checked = !focus;
     $("graph-context").replaceChildren(...(context || [el("p", { class: "muted" }, "Live process tree for the selected host. Open the graph from an alert or incident to highlight its attack chain.")]));
-    $("graph-node").replaceChildren(el("p", { class: "muted" }, "Select a node to inspect its metadata."));
+    $("graph-node").hidden = true;
     delete $("graph-svg").dataset.vb;
     await ensureHostEvents(host);
     for (const d of document.querySelectorAll("dialog[open]")) d.close();
@@ -486,9 +543,9 @@
     const alertIds = new Set(alerts.map((a) => String(a.alert_id || (a.alert || {}).alert_id)));
     const pids = new Set((Array.isArray(ev.stages) ? ev.stages : []).map((s) => Number(s.pid)).filter(Number.isFinite));
     const ctx = [el("div", { class: "story-head" }, sevChip(inc.severity), el("strong", {}, "Incident " + txt(inc.incident_id)), el("span", { class: "muted" }, `${txt(inc.host_id)} · score ${txt(ev.incident_score ?? inc.score)} · ${alertIds.size} member alerts`))];
-    if (ev.attack_chain) ctx.push(el("p", { class: "mono chain-text" }, "Engine attack chain: " + ev.attack_chain));
+    if (ev.attack_chain) ctx.push(el("ol", { class: "rule-chain" }, String(ev.attack_chain).split(/\s*->\s*/).map((step) => el("li", {}, step))));
     if (ev.process_lineage) ctx.push(el("p", { class: "mono" }, "Engine lineage: " + ev.process_lineage));
-    if (Array.isArray(ev.causal_path) && ev.causal_path.length) ctx.push(el("ol", { class: "causal" }, ev.causal_path.map((l) => el("li", { class: "mono" }, String(l)))));
+    if (Array.isArray(ev.causal_path) && ev.causal_path.length) ctx.push(el("details", { class: "causal-details" }, el("summary", {}, `Engine causal path · ${ev.causal_path.length} steps`), el("ol", { class: "causal" }, ev.causal_path.map((l) => el("li", { class: "mono" }, String(l))))));
     ctx.push(el("p", { class: "muted" }, "The engine output above is authoritative. The graph is rebuilt from ingested telemetry with the member alerts' processes highlighted."));
     openGraph(inc.host_id, { alertIds, pids }, ctx, "incident=" + encodeURIComponent(id));
   }
@@ -508,7 +565,7 @@
     window.addEventListener("mousemove", (ev) => { if (!drag) return; const r = canvas.getBoundingClientRect(); const [x, y, w, h] = drag.vb; setVb([x - ((ev.clientX - drag.x) / r.width) * w, y - ((ev.clientY - drag.y) / r.height) * h, w, h]); });
     window.addEventListener("mouseup", () => { drag = null; canvas.classList.remove("dragging"); });
     $("graph-fit").addEventListener("click", () => { delete canvas.dataset.vb; renderGraph(); });
-    $("graph-host").addEventListener("change", async () => { state.graphHost = $("graph-host").value; state.graphFocus = null; state.graphSelected = null; $("graph-all").checked = true; delete canvas.dataset.vb; $("graph-context").replaceChildren(el("p", { class: "muted" }, "Live process tree for " + state.graphHost + ".")); await ensureHostEvents(state.graphHost); renderGraph(); });
+    $("graph-host").addEventListener("change", async () => { state.graphHost = $("graph-host").value; state.graphFocus = null; state.graphSelected = null; $("graph-node").hidden = true; $("graph-all").checked = true; delete canvas.dataset.vb; $("graph-context").replaceChildren(el("p", { class: "muted" }, "Live process tree for " + state.graphHost + ".")); await ensureHostEvents(state.graphHost); renderGraph(); });
     $("graph-all").addEventListener("change", () => { delete canvas.dataset.vb; renderGraph(); });
   }
 
@@ -530,8 +587,8 @@
     if (state.auditError) { tbody.replaceChildren(el("tr", {}, el("td", { colspan: 5, class: "muted" }, "Audit history not available: " + state.auditError))); return; }
     const rows = state.audit.slice(-80).reverse();
     tbody.replaceChildren(...(rows.length ? rows.map((r) => el("tr", {},
-      el("td", { class: "mono" }, txt(r.sequence)), el("td", { class: "mono" }, txt(r.occurred_at)), el("td", {}, el("strong", {}, txt(r.event_type || r.action || r.kind))),
-      el("td", {}, txt(r.actor)), el("td", { class: "mono wrap" }, txt(r.request_id || r.asset_id)))) : [el("tr", {}, el("td", { colspan: 5, class: "muted" }, "No response decisions recorded yet."))]));
+      el("td", { class: "mono" }, txt(r.sequence)), el("td", { class: "mono nowrap" }, r.occurred_at ? new Date(r.occurred_at).toLocaleString() : "—"), el("td", {}, el("strong", {}, txt(r.event || r.event_type)), el("span", { class: "subline" }, txt(r.source))),
+      el("td", {}, txt(r.actor)), el("td", { class: "mono wrap" }, txt(r.request_id || r.asset_id || r.command_id)))) : [el("tr", {}, el("td", { colspan: 5, class: "muted" }, "No response decisions recorded yet."))]));
   }
 
   // -- health -----------------------------------------------------------------------------------
@@ -539,18 +596,19 @@
     const box = $("health-cards"); if (!box) return;
     const h = state.health, st = state.status, m = h && h.manager, worker = st && st.detection_worker;
     const card = (title, tone, rows) => el("article", { class: "hcard tone-" + tone }, el("h3", {}, el("span", { class: "dot" }), title), el("dl", { class: "kv" }, rows.flatMap(([k, v]) => [el("dt", {}, k), el("dd", { class: "mono" }, txt(v))])));
+    const wideCard = (...args) => { const c = card(...args); c.classList.add("wide"); return c; };
     const flat = (o) => Object.entries(o || {}).filter(([, v]) => v == null || typeof v !== "object").map(([k, v]) => [k.replace(/_/g, " "), v]);
     box.replaceChildren(
       card("Console server", h ? "ok" : "bad", h ? [["Status", h.console.status], ["Mode", h.console.mode], ["Uptime", h.console.uptime_seconds + " s"]] : [["Status", "unreachable"]]),
       card("Manager API · liveness", m && m.healthz.status === "ok" ? "ok" : "bad", m ? [["URL", m.url], ["/healthz", `${txt(m.healthz.http_status)} ${txt(m.healthz.status)}`], ["Latency", m.healthz.latency_ms + " ms"], ["Manager uptime", m.healthz.uptime_seconds != null ? m.healthz.uptime_seconds + " s" : null]] : [["Status", "Manager not configured"]]),
       card("Database · readiness", m && m.readyz.status === "ready" ? "ok" : "bad", m ? [["/readyz", `${txt(m.readyz.http_status)} ${txt(m.readyz.status)}`], ["Schema version", m.readyz.schema_version], ["Reason", m.readyz.reason], ["Latency", m.readyz.latency_ms + " ms"]] : [["Status", "not reported"]]),
       card("Detection worker", worker ? (worker.alive ? "ok" : "bad") : "warn", worker ? flat(worker).concat(flat(worker.ml).map(([k, v]) => ["ML · " + k, v])) : [["Status", "not reported"]]),
-      card("Persisted records", st ? "ok" : "warn", st ? [
+      wideCard("Persisted records", st ? "ok" : "warn", st ? [
         ...Object.entries(st.events || {}).map(([k, v]) => ["events · " + k, v]),
         ...Object.entries(st.endpoint_records || {}).map(([k, v]) => ["endpoint records · " + k, v]),
         ["alerts", st.alerts], ["incidents open", st.incidents_open],
         ...Object.entries(st.response_actions || {}).map(([k, v]) => ["response actions · " + k, v]),
-        ["agents enrolled", st.agents_enrolled], ["last event", st.last_event_at], ["last endpoint record", st.last_record_at]] : [["Status", "not reported"]]),
+        ["agents enrolled", st.agents_enrolled], ["last event", st.last_event_at ? new Date(st.last_event_at).toLocaleString() : null], ["last endpoint record", st.last_record_at ? new Date(st.last_record_at).toLocaleString() : null]] : [["Status", "not reported"]]),
     );
     const errs = h ? h.recent_errors : [];
     $("health-errors").replaceChildren(...(errs.length ? errs.map((e) => el("tr", {}, el("td", { class: "mono" }, txt(e.at)), el("td", { class: "mono" }, e.path), el("td", {}, String(e.status)), el("td", { class: "mono wrap" }, e.message))) : [el("tr", {}, el("td", { colspan: 4, class: "muted" }, "No Manager errors since the console started."))]));
