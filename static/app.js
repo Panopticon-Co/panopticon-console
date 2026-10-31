@@ -13,7 +13,7 @@
       critical: "#FF8298", "critical-bg": "#3B2431",
       high: "#FFB37A", "high-bg": "#382D23",
       medium: "#EAD374", "medium-bg": "#323120",
-      low: "#8ECBFF", "low-bg": "#1F3349",
+      low: "#8ECBFF", "low-bg": "#1F3349", ok: "#5BE0A6",
       unknown: "#B5C2CF", "unknown-bg": "#27333E"
     },
     light: {
@@ -24,7 +24,7 @@
       critical: "#A51D3B", "critical-bg": "#FFE5EB",
       high: "#93420B", "high-bg": "#FFF0E2",
       medium: "#715500", "medium-bg": "#FFF5CC",
-      low: "#165A96", "low-bg": "#E4F1FF",
+      low: "#165A96", "low-bg": "#E4F1FF", ok: "#0F7A4D",
       unknown: "#46586B", "unknown-bg": "#E8EEF4"
     }
   };
