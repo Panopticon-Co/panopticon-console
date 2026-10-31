@@ -15,6 +15,9 @@ The console runs in one of two modes:
 
 The page header always says which source is active.
 
+New to the console or preparing a presentation? Start with the
+[feature guide and demo playbook](docs/DASHBOARD_GUIDE.md).
+
 ## Scope (deliberately small)
 
 | Owns | Does **not** own |
