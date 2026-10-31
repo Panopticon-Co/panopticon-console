@@ -33,6 +33,9 @@ import argparse
 import json
 import os
 import re
+import threading
+import time
+from collections import deque
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -54,6 +57,7 @@ _STATIC_ROUTES = {
     "/artifact-verifier.js": ("artifact-verifier.js", "application/javascript; charset=utf-8"),
     "/artifact-download.js": ("artifact-download.js", "application/javascript; charset=utf-8"),
     "/evidence.js": ("evidence.js", "application/javascript; charset=utf-8"),
+    "/soc.js": ("soc.js", "application/javascript; charset=utf-8"),
 }
 
 # Alert fields the UI relies on. Declared here so a test can pin the contract
@@ -126,6 +130,22 @@ INCIDENT_QUERY = {
     "host_id": _pattern(_ID_RE),
     "limit": _limit,
 }
+
+
+def _rowid(value: str) -> Optional[str]:
+    return str(int(value)) if value.isdigit() and len(value) <= 18 else None
+
+
+EVENT_QUERY = {
+    "host_id": _pattern(_ID_RE),
+    "category": _pattern(re.compile(r"[a-z_]{1,32}")),
+    "after_event": _rowid,
+    "after_record": _rowid,
+    "limit": _limit,
+}
+RESPONSE_AUDIT_QUERY = {"limit": _limit, "after": _rowid}
+# Proxy failures kept for the System Health view (newest last).
+MAX_RECENT_ERRORS = 50
 
 
 class QueryError(ValueError):
@@ -364,6 +384,14 @@ def make_handler(
     alerts_file: Optional[Path], manager_url: str | None = None, manager_token: str | None = None
 ) -> type[BaseHTTPRequestHandler]:
     manager_configured = bool(manager_url and manager_token)
+    started_at = time.time()
+    recent_errors: deque = deque(maxlen=MAX_RECENT_ERRORS)
+    errors_lock = threading.Lock()
+
+    def note_error(path: str, status: int, message: str) -> None:
+        with errors_lock:
+            recent_errors.append({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                  "path": path, "status": status, "message": message[:300]})
     evidence_sessions = EvidenceSessions(manager_url, os.environ.get("PANOPTICON_CONSOLE_PUBLIC_ORIGIN"))
 
     class ConsoleHandler(BaseHTTPRequestHandler):
@@ -434,9 +462,47 @@ def make_handler(
             try:
                 status, body = manager_get(manager_url, manager_token, path)
             except ManagerProxyError as exc:
+                note_error(path.partition("?")[0], 502, f"could not reach Manager: {exc}")
                 self._send_json_error(502, f"could not reach Manager: {exc}")
                 return
+            if status >= 400:
+                note_error(path.partition("?")[0], status, body[:300].decode("utf-8", "replace"))
             self._send_bytes(status, body, JSON_TYPE)
+
+        def _proxy_query(self, raw_query: str, allowed: dict, path: str) -> None:
+            try:
+                query = validate_query(raw_query, allowed)
+            except QueryError as exc:
+                self._send_json_error(400, str(exc))
+                return
+            self._proxy_get(path + ("?" + urllib.parse.urlencode(query) if query else ""))
+
+        def _handle_health(self) -> None:
+            """Service health only -- agent connectivity is /api/agents."""
+            report: dict[str, Any] = {
+                "console": {"status": "ok", "uptime_seconds": round(time.time() - started_at, 1),
+                            "mode": "manager" if manager_configured else "file"},
+                "manager": None,
+            }
+            if manager_configured:
+                manager: dict[str, Any] = {"url": manager_url}
+                for name in ("healthz", "readyz"):
+                    begun = time.monotonic()
+                    try:
+                        status, body = manager_get(manager_url, manager_token, "/" + name, timeout=3.0)
+                        try:
+                            parsed = json.loads(body)
+                        except ValueError:
+                            parsed = {"status": "invalid_response"}
+                        manager[name] = {"http_status": status, **(parsed if isinstance(parsed, dict) else {})}
+                    except ManagerProxyError as exc:
+                        manager[name] = {"http_status": None, "status": "unreachable", "reason": str(exc)}
+                        note_error("/" + name, 502, str(exc))
+                    manager[name]["latency_ms"] = round((time.monotonic() - begun) * 1000, 1)
+                report["manager"] = manager
+            with errors_lock:
+                report["recent_errors"] = list(recent_errors)[::-1]
+            self._send_bytes(200, json.dumps(report).encode("utf-8"), JSON_TYPE)
 
         def _read_body(self) -> Optional[bytes]:
             """Read a bounded request body; on failure send the error and return None."""
@@ -509,6 +575,18 @@ def make_handler(
                 return
             if route == "/api/status":
                 self._proxy_get("/api/v1/status")
+                return
+            if route == "/api/health" and not raw_query:
+                self._handle_health()
+                return
+            if route == "/api/agents" and not raw_query:
+                self._proxy_get("/api/v1/agents")
+                return
+            if route == "/api/events":
+                self._proxy_query(raw_query, EVENT_QUERY, "/api/v1/events")
+                return
+            if route == "/api/response-audit":
+                self._proxy_query(raw_query, RESPONSE_AUDIT_QUERY, "/api/v1/response-audit")
                 return
             if route == "/api/incidents":
                 try:
